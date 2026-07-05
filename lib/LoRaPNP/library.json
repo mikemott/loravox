@@ -1,0 +1,7 @@
+{
+    "name": "LoRaPNP",
+    "version": "0.1.0",
+    "description": "Shared protocol library for LoRa PNP network",
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}
