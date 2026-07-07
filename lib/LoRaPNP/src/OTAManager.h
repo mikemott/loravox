@@ -64,9 +64,10 @@ public:
 
     // OTA control
     bool startUpdate(uint32_t session_id, uint16_t total_chunks,
-                     const uint8_t* firmware_sha256, OTATransport transport);
+                     const uint8_t* firmware_sha256, OTATransport transport,
+                     uint32_t firmware_size, uint16_t chunk_size);
     bool processChunk(uint16_t chunk_index, const uint8_t* data, size_t len);
-    bool finalizeUpdate();
+    bool finalizeUpdate(const uint8_t* signature, size_t sig_len);  // RSA signature required
     void abortUpdate();
 
     // State queries

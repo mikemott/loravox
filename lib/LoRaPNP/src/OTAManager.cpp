@@ -109,20 +109,33 @@ void OTAManager::update() {
 }
 
 bool OTAManager::startUpdate(uint32_t session_id, uint16_t total_chunks,
-                             const uint8_t* firmware_sha256, OTATransport transport) {
+                             const uint8_t* firmware_sha256, OTATransport transport,
+                             uint32_t firmware_size, uint16_t chunk_size) {
     if (session.state != OTA_IDLE && session.state != OTA_ANNOUNCED) {
         ESP_LOGW(TAG, "OTA already in progress");
         return false;
     }
 
     // Validate parameters
-    if (total_chunks == 0 || total_chunks > MAX_BLOCKS * 2) {
-        ESP_LOGE(TAG, "Invalid total_chunks: %u", total_chunks);
+    // For LoRa chunks ~200 bytes: 900KB firmware = 4608 chunks (reasonable)
+    // For WiFi/BLE full image: chunks = blocks = 219 (900KB / 4KB)
+    if (total_chunks == 0 || total_chunks > 8192) {
+        ESP_LOGE(TAG, "Invalid total_chunks: %u (max 8192)", total_chunks);
         return false;
     }
 
-    ESP_LOGI(TAG, "Starting OTA session %u: %u chunks via %s",
-             session_id, total_chunks,
+    if (firmware_size == 0 || firmware_size > MAX_FIRMWARE_SIZE) {
+        ESP_LOGE(TAG, "Invalid firmware_size: %u (max %u)", firmware_size, MAX_FIRMWARE_SIZE);
+        return false;
+    }
+
+    if (chunk_size == 0 || chunk_size > 4096) {
+        ESP_LOGE(TAG, "Invalid chunk_size: %u (max 4096)", chunk_size);
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Starting OTA session %u: %u chunks (%u bytes each, %u total) via %s",
+             session_id, total_chunks, chunk_size, firmware_size,
              (transport == OTA_TRANSPORT_WIFI) ? "WiFi" :
              (transport == OTA_TRANSPORT_BLE) ? "BLE" : "LoRa");
 
@@ -134,6 +147,8 @@ bool OTAManager::startUpdate(uint32_t session_id, uint16_t total_chunks,
     session.transport = transport;
     session.state = OTA_DOWNLOADING;
     session.last_update_ms = millis();
+    session.firmware_size = firmware_size;  // CRITICAL: Set firmware size for hash verification
+    session.chunk_size = chunk_size;        // CRITICAL: Set chunk size for positioning
     memcpy(session.firmware_sha256, firmware_sha256, 32);
 
     // Allocate chunk bitmap
@@ -182,7 +197,23 @@ bool OTAManager::processChunk(uint16_t chunk_index, const uint8_t* data, size_t 
         return true;
     }
 
-    // Write chunk to OTA partition
+    // CRITICAL: esp_ota_write() appends sequentially and cannot seek
+    // We MUST receive chunks in order for now
+    // TODO: Implement buffering or use esp_partition_write() for out-of-order support
+    if (chunk_index != session.chunks_received) {
+        ESP_LOGE(TAG, "Out-of-order chunk %u (expected %u) - not supported yet",
+                 chunk_index, session.chunks_received);
+        ESP_LOGE(TAG, "Chunks must be received sequentially with current implementation");
+        return false;
+    }
+
+    // Validate chunk size
+    if (len != session.chunk_size && chunk_index != session.total_chunks - 1) {
+        ESP_LOGE(TAG, "Invalid chunk size %u (expected %u)", len, session.chunk_size);
+        return false;
+    }
+
+    // Write chunk to OTA partition (sequential append)
     esp_err_t err = esp_ota_write(ota_handle, data, len);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "esp_ota_write failed for chunk %u: %d", chunk_index, err);
@@ -206,7 +237,7 @@ bool OTAManager::processChunk(uint16_t chunk_index, const uint8_t* data, size_t 
     return true;
 }
 
-bool OTAManager::finalizeUpdate() {
+bool OTAManager::finalizeUpdate(const uint8_t* signature, size_t sig_len) {
     if (session.state != OTA_DOWNLOADING) {
         ESP_LOGE(TAG, "Cannot finalize - not in downloading state");
         return false;
@@ -233,7 +264,7 @@ bool OTAManager::finalizeUpdate() {
         return false;
     }
 
-    // Verify SHA256 hash
+    // CRITICAL: Verify SHA256 hash BEFORE signature (cheaper check first)
     if (!verifyFinalHash()) {
         ESP_LOGE(TAG, "Firmware hash verification failed");
         session.state = OTA_FAILED;
@@ -241,6 +272,41 @@ bool OTAManager::finalizeUpdate() {
     }
 
     ESP_LOGI(TAG, "Firmware hash verified");
+
+    // CRITICAL: Verify RSA-2048 signature (required for security)
+    if (!signature || sig_len == 0) {
+        ESP_LOGE(TAG, "No signature provided - RSA verification required");
+        session.state = OTA_FAILED;
+        return false;
+    }
+
+    // Read firmware from partition for signature verification
+    uint8_t* firmware_buffer = (uint8_t*)malloc(session.firmware_size);
+    if (!firmware_buffer) {
+        ESP_LOGE(TAG, "Failed to allocate buffer for signature verification");
+        session.state = OTA_FAILED;
+        return false;
+    }
+
+    err = esp_partition_read(update_partition, 0, firmware_buffer, session.firmware_size);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read firmware for verification: %d", err);
+        free(firmware_buffer);
+        session.state = OTA_FAILED;
+        return false;
+    }
+
+    bool sig_valid = verifyFirmwareSignature(firmware_buffer, session.firmware_size,
+                                             signature, sig_len);
+    free(firmware_buffer);
+
+    if (!sig_valid) {
+        ESP_LOGE(TAG, "RSA signature verification FAILED - rejecting update");
+        session.state = OTA_FAILED;
+        return false;
+    }
+
+    ESP_LOGI(TAG, "RSA signature verified - firmware authenticated");
 
     // Set boot partition
     err = esp_ota_set_boot_partition(update_partition);
