@@ -2,8 +2,10 @@
 #define WIFI_TRANSPORT_H
 
 #include "Transport.h"
+#include "Packet.h"
 #include <WiFi.h>
 #include <queue>
+#include <deque>
 
 namespace lorapnp {
 
@@ -70,7 +72,7 @@ private:
     TransportMetrics metrics;
 
     // Packet queue (WiFi sends immediately, but we track for metrics)
-    std::queue<Packet> rx_queue;
+    std::queue<Packet, std::deque<Packet>> rx_queue;
 
     static constexpr uint32_t RETRY_WINDOW_MS = 300000;  // 5 minutes
     static constexpr uint32_t ATTEMPT_TIMEOUT_MS = 10000;  // 10 seconds per attempt
