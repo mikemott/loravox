@@ -58,6 +58,17 @@ void NetworkManager::update() {
     // Update all transports (handles async state machines)
     wifi_transport.update();
 
+    // Check if WiFi connection state changed and update transport selection
+    static bool last_wifi_connected = false;
+    bool wifi_connected = wifi_transport.isConnected();
+
+    if (wifi_connected != last_wifi_connected) {
+        ESP_LOGI("Network", "WiFi connection state changed: %s",
+                 wifi_connected ? "CONNECTED" : "DISCONNECTED");
+        selectPrimaryTransport();  // Re-evaluate transport priority
+        last_wifi_connected = wifi_connected;
+    }
+
     // Check for daily connectivity check
     if (config.daily_check_enabled) {
         performDailyCheck();

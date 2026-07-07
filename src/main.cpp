@@ -2205,14 +2205,12 @@ void loop() {
         password.toCharArray(wifi_password, sizeof(wifi_password));
         wifi_sta_enabled = true;
 
-        prefs.begin("lorapnp", false);
-        prefs.putBool("wifi_sta_en", true);
-        prefs.putString("wifi_ssid", wifi_ssid);
-        prefs.putString("wifi_pass", wifi_password);
-        prefs.end();
+        // Use NetworkManager API for consistency with web interface
+        network.setWiFiCredentials(wifi_ssid, wifi_password);
+        network.enableWiFi(true);
 
         Serial.printf("WiFi configured: %s\n", wifi_ssid);
-        Serial.println("Restart gateway to connect");
+        Serial.println("Connecting asynchronously (no restart required)...");
       } else {
         Serial.println("Usage: wifi <ssid> <password>");
       }

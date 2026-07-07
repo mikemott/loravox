@@ -44,7 +44,8 @@ void WiFiTransport::enable(bool _enabled) {
 }
 
 bool WiFiTransport::begin() {
-    WiFi.mode(WIFI_STA);
+    // Don't override WiFi mode - gateway may need AP+STA for web dashboard
+    // WiFi.mode() should be set by main application before calling begin()
     WiFi.setAutoReconnect(false);  // We handle reconnection manually
 
     if (enabled && strlen(ssid) > 0) {
