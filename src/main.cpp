@@ -11,6 +11,7 @@
 #include "Packet.h"
 #include "Types.h"
 #include "BLEProtocol.h"
+#include "NetworkManager.h"
 
 using namespace lorapnp;
 
@@ -49,6 +50,7 @@ WebServer webServer(80);
 Preferences prefs;
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
+NetworkManager network;
 bool mqtt_enabled = false;
 char mqtt_broker[64] = "";
 uint16_t mqtt_port = 1883;
@@ -1073,6 +1075,7 @@ void handleWifiConfig() {
 
   const char* ssid = doc["ssid"];
   const char* password = doc["password"];
+  bool enabled = doc.containsKey("enabled") ? doc["enabled"].as<bool>() : true;
 
   if (!ssid || strlen(ssid) == 0 || strlen(ssid) > 31) {
     webServer.send(400, "application/json", "{\"error\":\"Invalid SSID\"}");
@@ -1084,24 +1087,58 @@ void handleWifiConfig() {
     return;
   }
 
-  // Save WiFi credentials
+  // Save WiFi credentials locally and in NetworkManager
   strncpy(wifi_ssid, ssid, sizeof(wifi_ssid));
   strncpy(wifi_password, password, sizeof(wifi_password));
-  wifi_sta_enabled = true;
+  wifi_sta_enabled = enabled;
 
   prefs.begin("lorapnp", false);
-  prefs.putBool("wifi_sta_en", true);
+  prefs.putBool("wifi_sta_en", enabled);
   prefs.putString("wifi_ssid", wifi_ssid);
   prefs.putString("wifi_pass", wifi_password);
   prefs.end();
 
-  Serial.printf("WiFi configured: %s\n", wifi_ssid);
+  // Configure NetworkManager with new credentials
+  network.setWiFiCredentials(wifi_ssid, wifi_password);
+  network.enableWiFi(enabled);
 
-  webServer.send(200, "application/json", "{\"success\":true}");
+  Serial.printf("WiFi configured: %s (enabled=%s)\n", wifi_ssid, enabled ? "true" : "false");
 
-  // Restart after a short delay to allow response to be sent
-  delay(1000);
-  ESP.restart();
+  webServer.send(200, "application/json", "{\"success\":true,\"message\":\"WiFi credentials saved. Connecting...\"}");
+}
+
+void handleWifiStatus() {
+  StaticJsonDocument<512> doc;
+
+  // Current transport status
+  TransportType current = network.getCurrentTransport();
+  doc["current_transport"] = (int)current;
+  doc["transport_name"] = (current == TRANSPORT_WIFI) ? "WiFi" :
+                          (current == TRANSPORT_BLE) ? "BLE" : "LoRa";
+
+  // WiFi status
+  doc["wifi_enabled"] = wifi_sta_enabled;
+  doc["wifi_connected"] = (WiFi.status() == WL_CONNECTED);
+  doc["wifi_ssid"] = wifi_ssid;
+
+  if (WiFi.status() == WL_CONNECTED) {
+    doc["wifi_ip"] = WiFi.localIP().toString();
+    doc["wifi_rssi"] = WiFi.RSSI();
+  }
+
+  // Transport metrics
+  TransportMetrics wifi_metrics = network.getTransportMetrics(TRANSPORT_WIFI);
+  doc["wifi_packets_sent"] = wifi_metrics.packets_sent;
+  doc["wifi_bytes_sent"] = wifi_metrics.bytes_sent;
+  doc["wifi_packets_received"] = wifi_metrics.packets_received;
+  doc["wifi_bytes_received"] = wifi_metrics.bytes_received;
+  doc["wifi_failures"] = wifi_metrics.failures;
+
+  doc["transport_switch_count"] = network.getTransportSwitchCount();
+
+  String json;
+  serializeJson(doc, json);
+  webServer.send(200, "application/json", json);
 }
 
 int findNodeByUID(const uint8_t* uid) {
@@ -1756,24 +1793,27 @@ void setup() {
   Serial.print("AP IP: ");
   Serial.println(WiFi.softAPIP());
 
-  // Start WiFi Station mode if configured
+  // Initialize NetworkManager for adaptive transport selection
+  network.begin();
+
+  // Configure WiFi if credentials are set
   if (wifi_sta_enabled && strlen(wifi_ssid) > 0) {
-    Serial.printf("Connecting to WiFi: %s\n", wifi_ssid);
-    WiFi.begin(wifi_ssid, wifi_password);
-
-    uint32_t wifi_start = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - wifi_start < 10000) {
-      delay(100);
-    }
-
-    if (WiFi.status() == WL_CONNECTED) {
-      wifi_connected = true;
-      Serial.print("WiFi connected! IP: ");
-      Serial.println(WiFi.localIP());
-    } else {
-      Serial.println("WiFi connection failed, AP mode only");
-    }
+    Serial.printf("NetworkManager: Setting WiFi credentials for %s\n", wifi_ssid);
+    network.setWiFiCredentials(wifi_ssid, wifi_password);
+    network.enableWiFi(true);
   }
+
+  // Configure battery-aware network selection
+  NetworkConfig net_config;
+  net_config.daily_check_enabled = true;
+  net_config.daily_check_hour = 3;  // 3 AM daily check
+  net_config.min_battery_for_check = 3.5f;
+  net_config.battery_aware_mode = true;
+  network.setConfig(net_config);
+
+  // Note: NetworkManager uses async WiFi connection, so it won't block here
+  // WiFi status updates happen in loop() via network.update()
+  wifi_connected = (WiFi.status() == WL_CONNECTED);
 
   // Start mDNS
   if (MDNS.begin("lorapnp")) {
@@ -1796,6 +1836,7 @@ void setup() {
   webServer.on("/api/rename", HTTP_POST, handleRename);
   webServer.on("/api/reboot", HTTP_POST, handleReboot);
   webServer.on("/api/wifi", HTTP_POST, handleWifiConfig);
+  webServer.on("/api/wifi/status", HTTP_GET, handleWifiStatus);
   webServer.begin();
   Serial.println("Web server started");
   Serial.println("Dashboard: http://lorapnp.local or http://192.168.4.1");
@@ -1891,6 +1932,12 @@ void cleanupStaleNodes() {
 // ========== END STALE NODE DETECTION ==========
 
 void loop() {
+  // Update NetworkManager for async WiFi state machine
+  network.update();
+
+  // Update wifi_connected flag based on actual WiFi status
+  wifi_connected = (WiFi.status() == WL_CONNECTED);
+
   webServer.handleClient();
 
   if (mqtt_enabled && !mqttClient.connected() && strlen(mqtt_broker) > 0) {
@@ -2158,23 +2205,26 @@ void loop() {
         password.toCharArray(wifi_password, sizeof(wifi_password));
         wifi_sta_enabled = true;
 
-        prefs.begin("lorapnp", false);
-        prefs.putBool("wifi_sta_en", true);
-        prefs.putString("wifi_ssid", wifi_ssid);
-        prefs.putString("wifi_pass", wifi_password);
-        prefs.end();
+        // Use NetworkManager API for consistency with web interface
+        network.setWiFiCredentials(wifi_ssid, wifi_password);
+        network.enableWiFi(true);
 
         Serial.printf("WiFi configured: %s\n", wifi_ssid);
-        Serial.println("Restart gateway to connect");
+        Serial.println("Connecting asynchronously (no restart required)...");
       } else {
         Serial.println("Usage: wifi <ssid> <password>");
       }
     } else if (cmd == "wifi off") {
+      // Use NetworkManager API for consistency with web interface
+      network.enableWiFi(false);
+
+      // Keep old flag in sync for compatibility
       wifi_sta_enabled = false;
       prefs.begin("lorapnp", false);
       prefs.putBool("wifi_sta_en", false);
       prefs.end();
-      Serial.println("WiFi station mode disabled. Restart to apply.");
+
+      Serial.println("WiFi disabled.");
     } else if (cmd == "wifi status") {
       Serial.println("\n=== WiFi Status ===");
       Serial.printf("AP Mode: LoRaPNP-Gateway (%s)\n", WiFi.softAPIP().toString().c_str());
