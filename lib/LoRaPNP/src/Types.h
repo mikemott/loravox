@@ -45,6 +45,15 @@ enum class MessageType : uint8_t {
     BLE_SENSOR_DATA = 0x0C,  // Station forwarding BLE remote sensor data
     NAME_UPDATE    = 0x0D,   // Gateway pushes custom names (station/sensor/remote)
     REBOOT         = 0x0E,   // Gateway → Station: Remote reboot command
+    // OTA Update messages (0x20-0x2F reserved)
+    OTA_ANNOUNCE   = 0x20,   // Coordinator → Node: Announce available update
+    OTA_REQUEST    = 0x21,   // Node → Coordinator: Request update download
+    OTA_START      = 0x22,   // Coordinator → Node: Begin transfer session
+    OTA_CHUNK      = 0x23,   // Coordinator → Node: Firmware data chunk
+    OTA_CHUNK_ACK  = 0x24,   // Node → Coordinator: Acknowledge chunk received
+    OTA_COMPLETE   = 0x25,   // Coordinator → Node: All chunks sent
+    OTA_VERIFY     = 0x26,   // Node → Coordinator: Verification result
+    OTA_ABORT      = 0x27,   // Both: Cancel update
 };
 
 enum class NameType : uint8_t {
