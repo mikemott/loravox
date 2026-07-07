@@ -24,9 +24,7 @@ OTAManager::OTAManager()
     : lora_airtime_used_ms(0)
     , lora_window_start_ms(0)
     , last_chunk_sent_ms(0)
-    , ota_handle(0)
     , update_partition(nullptr)
-    , ota_begun(false)
 {
     memset(&session, 0, sizeof(session));
     session.state = OTA_IDLE;
@@ -75,17 +73,13 @@ bool OTAManager::begin() {
     if (loadSessionFromNVS()) {
         ESP_LOGI(TAG, "Resumed OTA session %u (%u/%u chunks)",
                  session.session_id, session.chunks_received, session.total_chunks);
+        ESP_LOGI(TAG, "Resume enabled - partition already erased, can write to any offset");
     }
 
     return true;
 }
 
 void OTAManager::end() {
-    if (ota_begun) {
-        esp_ota_abort(ota_handle);
-        ota_begun = false;
-    }
-
     if (session.chunk_bitmap) {
         free(session.chunk_bitmap);
         session.chunk_bitmap = nullptr;
@@ -137,6 +131,13 @@ bool OTAManager::startUpdate(uint32_t session_id, uint16_t total_chunks,
         return false;
     }
 
+    // CRITICAL: Validate firmware fits in OTA partition
+    if (firmware_size > update_partition->size) {
+        ESP_LOGE(TAG, "Firmware size %u exceeds OTA partition size %u",
+                 firmware_size, update_partition->size);
+        return false;
+    }
+
     if (chunk_size == 0 || chunk_size > 4096) {
         ESP_LOGE(TAG, "Invalid chunk_size: %u (max 4096)", chunk_size);
         return false;
@@ -168,17 +169,19 @@ bool OTAManager::startUpdate(uint32_t session_id, uint16_t total_chunks,
         return false;
     }
 
-    // Begin OTA
-    esp_err_t err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle);
+    // CRITICAL FIX: Erase partition and use esp_partition_write() for resume support
+    // This allows writing to any offset, enabling resume after reboot
+    ESP_LOGI(TAG, "Erasing OTA partition (%u bytes)...", update_partition->size);
+    esp_err_t err = esp_partition_erase_range(update_partition, 0, update_partition->size);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "esp_ota_begin failed: %d", err);
+        ESP_LOGE(TAG, "esp_partition_erase_range failed: %d", err);
         free(session.chunk_bitmap);
         session.chunk_bitmap = nullptr;
         resetSession();
         return false;
     }
 
-    ota_begun = true;
+    ESP_LOGI(TAG, "OTA partition erased, ready for chunks");
 
     // Save initial checkpoint
     saveSessionToNVS();
@@ -205,26 +208,27 @@ bool OTAManager::processChunk(uint16_t chunk_index, const uint8_t* data, size_t 
         return true;
     }
 
-    // CRITICAL: esp_ota_write() appends sequentially and cannot seek
-    // We MUST receive chunks in order for now
-    // TODO: Implement buffering or use esp_partition_write() for out-of-order support
-    if (chunk_index != session.chunks_received) {
-        ESP_LOGE(TAG, "Out-of-order chunk %u (expected %u) - not supported yet",
-                 chunk_index, session.chunks_received);
-        ESP_LOGE(TAG, "Chunks must be received sequentially with current implementation");
-        return false;
-    }
-
     // Validate chunk size
     if (len != session.chunk_size && chunk_index != session.total_chunks - 1) {
         ESP_LOGE(TAG, "Invalid chunk size %u (expected %u)", len, session.chunk_size);
         return false;
     }
 
-    // Write chunk to OTA partition (sequential append)
-    esp_err_t err = esp_ota_write(ota_handle, data, len);
+    // CRITICAL FIX: Use esp_partition_write() with offset for resume support
+    // This allows out-of-order chunks and resume after reboot
+    size_t offset = chunk_index * session.chunk_size;
+
+    // Validate offset doesn't exceed partition
+    if (offset + len > update_partition->size) {
+        ESP_LOGE(TAG, "Chunk %u would exceed partition (offset %u + len %u > %u)",
+                 chunk_index, offset, len, update_partition->size);
+        return false;
+    }
+
+    esp_err_t err = esp_partition_write(update_partition, offset, data, len);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "esp_ota_write failed for chunk %u: %d", chunk_index, err);
+        ESP_LOGE(TAG, "esp_partition_write failed for chunk %u at offset %u: %d",
+                 chunk_index, offset, err);
         return false;
     }
 
@@ -262,16 +266,6 @@ bool OTAManager::finalizeUpdate(const uint8_t* signature, size_t sig_len) {
 
     session.state = OTA_VERIFYING;
 
-    // End OTA write
-    esp_err_t err = esp_ota_end(ota_handle);
-    ota_begun = false;
-
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "esp_ota_end failed: %d", err);
-        session.state = OTA_FAILED;
-        return false;
-    }
-
     // CRITICAL: Verify SHA256 hash BEFORE signature (cheaper check first)
     if (!verifyFinalHash()) {
         ESP_LOGE(TAG, "Firmware hash verification failed");
@@ -298,7 +292,7 @@ bool OTAManager::finalizeUpdate(const uint8_t* signature, size_t sig_len) {
     ESP_LOGI(TAG, "RSA signature verified - firmware authenticated");
 
     // Set boot partition
-    err = esp_ota_set_boot_partition(update_partition);
+    esp_err_t err = esp_ota_set_boot_partition(update_partition);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "esp_ota_set_boot_partition failed: %d", err);
         session.state = OTA_FAILED;
@@ -315,11 +309,6 @@ bool OTAManager::finalizeUpdate(const uint8_t* signature, size_t sig_len) {
 
 void OTAManager::abortUpdate() {
     ESP_LOGW(TAG, "Aborting OTA update");
-
-    if (ota_begun) {
-        esp_ota_abort(ota_handle);
-        ota_begun = false;
-    }
 
     if (session.chunk_bitmap) {
         free(session.chunk_bitmap);
@@ -561,10 +550,8 @@ bool OTAManager::loadSessionFromNVS() {
 
     prefs.end();
 
-    // NOTE: esp_ota_handle_t cannot be serialized/restored
-    // Resume only works for sequential chunks (Phase 1 limitation)
-    // For true out-of-order resume, need to switch to esp_partition_write()
-    ESP_LOGW(TAG, "Session resumed - expecting sequential chunk %u next", session.chunks_received);
+    ESP_LOGI(TAG, "Session fully restored - %u chunks already received", session.chunks_received);
+    ESP_LOGI(TAG, "Resume ready - can accept chunks in any order");
 
     return true;
 }

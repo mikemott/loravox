@@ -112,9 +112,7 @@ private:
 
     // OTA session state
     OTASessionState session;
-    esp_ota_handle_t ota_handle;
     const esp_partition_t* update_partition;
-    bool ota_begun;
 
     // Preferences for NVS
     Preferences prefs;
