@@ -2215,11 +2215,16 @@ void loop() {
         Serial.println("Usage: wifi <ssid> <password>");
       }
     } else if (cmd == "wifi off") {
+      // Use NetworkManager API for consistency with web interface
+      network.enableWiFi(false);
+
+      // Keep old flag in sync for compatibility
       wifi_sta_enabled = false;
       prefs.begin("lorapnp", false);
       prefs.putBool("wifi_sta_en", false);
       prefs.end();
-      Serial.println("WiFi station mode disabled. Restart to apply.");
+
+      Serial.println("WiFi disabled.");
     } else if (cmd == "wifi status") {
       Serial.println("\n=== WiFi Status ===");
       Serial.printf("AP Mode: LoRaPNP-Gateway (%s)\n", WiFi.softAPIP().toString().c_str());
