@@ -79,9 +79,8 @@ public:
     // Health check for rollback protection
     bool performDiagnostics();
 
-    // Signature verification (RSA-2048)
-    bool verifyFirmwareSignature(const uint8_t* firmware, size_t len,
-                                 const uint8_t* signature, size_t sig_len);
+    // Signature verification (RSA-2048) - streaming implementation
+    bool verifyFirmwareSignature(const uint8_t* signature, size_t sig_len);
 
     // Session resume (after power loss)
     bool resumeSession();

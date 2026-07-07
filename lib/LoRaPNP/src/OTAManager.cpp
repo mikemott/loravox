@@ -6,10 +6,18 @@ namespace lorapnp {
 
 static const char* TAG = "OTAManager";
 
-// Placeholder public key - will be replaced with build-time embedded key
+// CRITICAL: This is a PLACEHOLDER public key and MUST be replaced before production use.
+// RSA signature verification will FAIL with this truncated key.
+//
+// To generate a real RSA-2048 key pair:
+//   1. Generate private key (KEEP SECRET): openssl genrsa -out firmware_signing_key.pem 2048
+//   2. Extract public key (embed here):    openssl rsa -in firmware_signing_key.pem -pubout -out firmware_public_key.pem
+//   3. Copy the full PEM contents from firmware_public_key.pem and replace below
+//
+// For production, implement build-time key embedding via platformio.ini extra_scripts.
 const char* OTAManager::ota_public_key_pem =
     "-----BEGIN PUBLIC KEY-----\n"
-    "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...\n"
+    "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...\n"  // PLACEHOLDER - REPLACE ME
     "-----END PUBLIC KEY-----\n";
 
 OTAManager::OTAManager()
@@ -280,27 +288,8 @@ bool OTAManager::finalizeUpdate(const uint8_t* signature, size_t sig_len) {
         return false;
     }
 
-    // Read firmware from partition for signature verification
-    uint8_t* firmware_buffer = (uint8_t*)malloc(session.firmware_size);
-    if (!firmware_buffer) {
-        ESP_LOGE(TAG, "Failed to allocate buffer for signature verification");
-        session.state = OTA_FAILED;
-        return false;
-    }
-
-    err = esp_partition_read(update_partition, 0, firmware_buffer, session.firmware_size);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to read firmware for verification: %d", err);
-        free(firmware_buffer);
-        session.state = OTA_FAILED;
-        return false;
-    }
-
-    bool sig_valid = verifyFirmwareSignature(firmware_buffer, session.firmware_size,
-                                             signature, sig_len);
-    free(firmware_buffer);
-
-    if (!sig_valid) {
+    // Verify signature using streaming (no large malloc - uses only 4KB RAM)
+    if (!verifyFirmwareSignature(signature, sig_len)) {
         ESP_LOGE(TAG, "RSA signature verification FAILED - rejecting update");
         session.state = OTA_FAILED;
         return false;
@@ -394,12 +383,50 @@ bool OTAManager::performDiagnostics() {
     return true;
 }
 
-bool OTAManager::verifyFirmwareSignature(const uint8_t* firmware, size_t len,
-                                         const uint8_t* signature, size_t sig_len) {
+bool OTAManager::verifyFirmwareSignature(const uint8_t* signature, size_t sig_len) {
+    // CRITICAL: Stream firmware from flash to compute hash (no large malloc)
+    // Prevents OOM on devices with limited RAM (ESP32-S3 has ~320KB vs ~900KB firmware)
+
+    // Calculate SHA256 hash by streaming firmware from partition
+    uint8_t hash[32];
+    mbedtls_sha256_context ctx;
+
+    mbedtls_sha256_init(&ctx);
+    mbedtls_sha256_starts(&ctx, 0);  // 0 = SHA256 (not SHA224)
+
+    // Stream in 4KB chunks (only 4KB RAM needed instead of 900KB)
+    const size_t chunk_size = 4096;
+    uint8_t* buffer = (uint8_t*)malloc(chunk_size);
+    if (!buffer) {
+        ESP_LOGE(TAG, "Failed to allocate hash buffer");
+        return false;
+    }
+
+    size_t total_read = 0;
+    while (total_read < session.firmware_size) {
+        size_t remaining = session.firmware_size - total_read;
+        size_t read_size = min(chunk_size, remaining);
+
+        esp_err_t err = esp_partition_read(update_partition, total_read, buffer, read_size);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Partition read failed at offset %u: %d", total_read, err);
+            free(buffer);
+            mbedtls_sha256_free(&ctx);
+            return false;
+        }
+
+        mbedtls_sha256_update(&ctx, buffer, read_size);
+        total_read += read_size;
+    }
+
+    mbedtls_sha256_finish(&ctx, hash);
+    mbedtls_sha256_free(&ctx);
+    free(buffer);
+
+    // Parse public key
     mbedtls_pk_context pk;
     mbedtls_pk_init(&pk);
 
-    // Parse public key
     int ret = mbedtls_pk_parse_public_key(&pk,
         (const unsigned char*)ota_public_key_pem,
         strlen(ota_public_key_pem) + 1);
@@ -410,11 +437,7 @@ bool OTAManager::verifyFirmwareSignature(const uint8_t* firmware, size_t len,
         return false;
     }
 
-    // Hash firmware
-    uint8_t hash[32];
-    mbedtls_sha256(firmware, len, hash, 0);
-
-    // Verify signature
+    // Verify signature against computed hash
     ret = mbedtls_pk_verify(&pk, MBEDTLS_MD_SHA256,
         hash, sizeof(hash), signature, sig_len);
 
@@ -442,29 +465,27 @@ bool OTAManager::verifyFinalHash() {
     uint8_t* buffer = (uint8_t*)malloc(chunk_size);
     if (!buffer) {
         ESP_LOGE(TAG, "Failed to allocate hash buffer");
+        mbedtls_sha256_free(&ctx);
         return false;
     }
 
+    // CRITICAL FIX: Read exactly firmware_size bytes, no more
+    // Bug was: checked total_read AFTER hashing the chunk, so could hash garbage past firmware_size
     size_t total_read = 0;
-    size_t partition_size = update_partition->size;
+    while (total_read < session.firmware_size) {
+        size_t remaining = session.firmware_size - total_read;
+        size_t read_size = min(chunk_size, remaining);  // Never exceed firmware_size
 
-    for (size_t offset = 0; offset < partition_size; offset += chunk_size) {
-        size_t read_size = min(chunk_size, partition_size - offset);
-
-        esp_err_t err = esp_partition_read(update_partition, offset, buffer, read_size);
+        esp_err_t err = esp_partition_read(update_partition, total_read, buffer, read_size);
         if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Partition read failed at offset %u: %d", offset, err);
+            ESP_LOGE(TAG, "Partition read failed at offset %u: %d", total_read, err);
             free(buffer);
+            mbedtls_sha256_free(&ctx);
             return false;
         }
 
         mbedtls_sha256_update(&ctx, buffer, read_size);
         total_read += read_size;
-
-        // Stop when we've read the actual firmware (not the whole partition)
-        if (total_read >= session.firmware_size) {
-            break;
-        }
     }
 
     mbedtls_sha256_finish(&ctx, calculated_hash);
@@ -527,6 +548,10 @@ bool OTAManager::loadSessionFromNVS() {
 
     prefs.getBytes("fw_sha256", session.firmware_sha256, 32);
 
+    // CRITICAL: Restore firmware_size and chunk_size (required for hash verification and validation)
+    session.firmware_size = prefs.getUInt("fw_size", 0);
+    session.chunk_size = prefs.getUShort("chunk_size", 0);
+
     // Reallocate bitmap
     session.bitmap_size = (session.total_chunks + 7) / 8;
     session.chunk_bitmap = (uint8_t*)malloc(session.bitmap_size);
@@ -535,6 +560,12 @@ bool OTAManager::loadSessionFromNVS() {
     }
 
     prefs.end();
+
+    // NOTE: esp_ota_handle_t cannot be serialized/restored
+    // Resume only works for sequential chunks (Phase 1 limitation)
+    // For true out-of-order resume, need to switch to esp_partition_write()
+    ESP_LOGW(TAG, "Session resumed - expecting sequential chunk %u next", session.chunks_received);
+
     return true;
 }
 
@@ -548,6 +579,10 @@ bool OTAManager::saveSessionToNVS() {
     prefs.putUShort("chunks_rx", session.chunks_received);
     prefs.putUChar("transport", (uint8_t)session.transport);
     prefs.putBytes("fw_sha256", session.firmware_sha256, 32);
+
+    // CRITICAL: Save firmware_size and chunk_size for hash verification and resume
+    prefs.putUInt("fw_size", session.firmware_size);
+    prefs.putUShort("chunk_size", session.chunk_size);
 
     if (session.chunk_bitmap) {
         prefs.putBytes("bitmap", session.chunk_bitmap, session.bitmap_size);
