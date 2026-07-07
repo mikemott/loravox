@@ -38,3 +38,7 @@ node_modules/
 # Environment
 .env
 .env.local
+
+# OTA Signing Keys (CRITICAL: Keep private key secret)
+tools/keys/firmware_signing_key.pem
+tools/keys/*.pem.bak
