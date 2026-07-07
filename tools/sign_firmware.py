@@ -26,7 +26,7 @@ from pathlib import Path
 
 try:
     from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import padding
+    from cryptography.hazmat.primitives.asymmetric import padding, utils
     from cryptography.hazmat.backends import default_backend
 except ImportError:
     print("ERROR: cryptography library not found")
@@ -64,7 +64,7 @@ def sign_firmware(firmware_path, private_key_path, output_path, verify=False):
     signature = private_key.sign(
         sha256_hash,
         padding.PKCS1v15(),
-        hashes.SHA256()
+        utils.Prehashed(hashes.SHA256())
     )
 
     sig_size = len(signature)
@@ -135,7 +135,7 @@ def verify_signature(signed_firmware_path, private_key_path):
             signature,
             sha256_hash,
             padding.PKCS1v15(),
-            hashes.SHA256()
+            utils.Prehashed(hashes.SHA256())
         )
         print("✅ Signature verification PASSED")
         return True
