@@ -117,8 +117,7 @@ private:
     // Preferences for NVS
     Preferences prefs;
 
-    // Public key (embedded at compile time via platformio.ini)
-    // For now, we'll use a placeholder until build system is configured
+    // Public key — defined in OTAManager.cpp from OTAPublicKey.h (shared with GatewayOTA).
     static const char* ota_public_key_pem;
 };
 

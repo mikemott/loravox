@@ -1,4 +1,5 @@
 #include "OTAManager.h"
+#include "OTAPublicKey.h"
 #include <esp_system.h>
 #include <esp_log.h>
 
@@ -6,20 +7,8 @@ namespace lorapnp {
 
 static const char* TAG = "OTAManager";
 
-// RSA-2048 public key for firmware signature verification
-// Private key location: tools/keys/firmware_signing_key.pem (KEEP SECRET - NOT IN GIT)
-// To sign firmware: python3 tools/sign_firmware.py firmware.bin
-// Generated: 2026-07-06
-const char* OTAManager::ota_public_key_pem =
-    "-----BEGIN PUBLIC KEY-----\n"
-    "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA40/IitxjkQzS4p8VhN/c\n"
-    "JCJx31yc/FvxfkI34z4jP9e1CcIRWiDeMWL+QwOg8rhmovRtTsHibL1dweJyeJws\n"
-    "kMOae0h2fLrB2FA9UXhGQkQPHDO6/HVhWCEMLIlXkfcfrNWtPozR4H5n3TedeO0O\n"
-    "O/crmuAQLLcsdCPbXOc91mG/r00jVI0naSE1w6pdjRCHfLNRk5emMZykqCCL2avG\n"
-    "EtSg7aa15TSxa4w2+PPYGlkHx8vPKTCF1hD6TafaU7FyuSGBBYGNZylcCv8tgT5W\n"
-    "VQqe1C8J/mELwPW7horcyuirJRYiVXX80GXY3Y0l0nfcw7Del/udGOF5Ad6U/XqH\n"
-    "cQIDAQAB\n"
-    "-----END PUBLIC KEY-----\n";
+// RSA-2048 public key — single source of truth in OTAPublicKey.h (shared with GatewayOTA).
+const char* OTAManager::ota_public_key_pem = OTA_PUBLIC_KEY_PEM;
 
 OTAManager::OTAManager()
     : lora_airtime_used_ms(0)

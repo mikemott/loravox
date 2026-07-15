@@ -11,6 +11,7 @@
 #include "Packet.h"
 #include "Types.h"
 #include "BLEProtocol.h"
+#include "GatewayOTA.h"
 
 using namespace lorapnp;
 
@@ -46,6 +47,7 @@ constexpr uint8_t SENSOR_LABEL_LEN = 16;
 #endif
 SSD1306Wire display(0x3c, I2C_SDA, I2C_SCL);
 WebServer webServer(80);
+GatewayOTA gatewayOTA;  // WiFi self-update endpoint (/update)
 Preferences prefs;
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
@@ -1796,6 +1798,7 @@ void setup() {
   webServer.on("/api/rename", HTTP_POST, handleRename);
   webServer.on("/api/reboot", HTTP_POST, handleReboot);
   webServer.on("/api/wifi", HTTP_POST, handleWifiConfig);
+  gatewayOTA.begin(&webServer);  // GET/POST /update — signed WiFi self-update
   webServer.begin();
   Serial.println("Web server started");
   Serial.println("Dashboard: http://lorapnp.local or http://192.168.4.1");
@@ -1892,6 +1895,7 @@ void cleanupStaleNodes() {
 
 void loop() {
   webServer.handleClient();
+  gatewayOTA.loop();  // deferred reboot after a verified self-update
 
   if (mqtt_enabled && !mqttClient.connected() && strlen(mqtt_broker) > 0) {
     if (mqttClient.connect("LoRaPNP-Gateway")) {
