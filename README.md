@@ -24,11 +24,11 @@ Built for ESP32-S3 (LilyGO T3-S3) with SX1262 LoRa radio. See [hardware document
 
 ## Documentation
 
-- [Protocol Specification](PROTOCOL-SPEC.md)
-- [BLE Protocol](BLE-PROTOCOL.md)
+- [Protocol Specification](docs/PROTOCOL-SPEC.md)
+- [BLE Protocol](docs/BLE-PROTOCOL.md)
 - [Hardware Recommendations](docs/hardware/HARDWARE-RECOMMENDATIONS.md)
 - [Assembly Guide](docs/assembly/ASSEMBLY-GUIDE.md)
-- [Testing Strategy](THREE-TIER-TESTING.md)
+- [Testing Strategy](docs/THREE-TIER-TESTING.md)
 
 ## Project Structure
 
@@ -57,4 +57,4 @@ cd remote_sensor && pio run
 
 ## Development Status
 
-See [FEATURE-TRACKER.md](FEATURE-TRACKER.md) for current implementation status and [RESILIENCY-STATUS.md](RESILIENCY-STATUS.md) for reliability improvements.
+See [FEATURE-TRACKER.md](FEATURE-TRACKER.md) for current implementation status.
