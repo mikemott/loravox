@@ -285,8 +285,12 @@ void loadAuthConfig() {
 }
 
 // True iff the current request carries valid admin credentials.
+// The adminPass[0] guard fails closed if provisioned==true but the password is
+// somehow empty (e.g. a half-failed NVS write) — Digest would otherwise accept
+// an empty-password response.
 bool clientAuthed() {
-  return gatewayProvisioned && webServer.authenticate(ADMIN_USER, adminPass);
+  return gatewayProvisioned && adminPass[0] != '\0'
+         && webServer.authenticate(ADMIN_USER, adminPass);
 }
 
 // Gate a protected route. Returns false (and sends the appropriate response) when the
@@ -297,7 +301,7 @@ bool requireAuth() {
     webServer.send(302, "text/plain", "Setup required");
     return false;
   }
-  if (!webServer.authenticate(ADMIN_USER, adminPass)) {
+  if (adminPass[0] == '\0' || !webServer.authenticate(ADMIN_USER, adminPass)) {
     webServer.requestAuthentication(DIGEST_AUTH, AUTH_REALM, "Authentication required");
     return false;
   }
@@ -315,8 +319,8 @@ static const char SETUP_HTML[] PROGMEM =
     "<form id=f>"
     "<label>Admin password <small>(8-63 chars)</small></label><input type=password name=password required minlength=8 maxlength=63>"
     "<label>Confirm password</label><input type=password name=confirm required minlength=8 maxlength=63>"
-    "<label>Home WiFi SSID <small>(optional)</small></label><input name=ssid>"
-    "<label>Home WiFi password</label><input type=password name=wifi_password>"
+    "<label>Home WiFi SSID <small>(optional)</small></label><input name=ssid maxlength=31>"
+    "<label>Home WiFi password</label><input type=password name=wifi_password maxlength=63>"
     "<button>Save &amp; reboot</button></form><div id=s></div>"
     "<script>f.onsubmit=async e=>{e.preventDefault();"
     "if(f.password.value!==f.confirm.value){s.textContent='Passwords do not match';return;}"
@@ -351,16 +355,31 @@ void handleSetupSave() {
                    "{\"message\":\"password must be 8-63 chars and match confirmation\"}");
     return;
   }
+  // Bound to the buffers the STA path reads into: wifi_ssid[32], wifi_password[64].
+  if (ssid.length() > 31 || wifiPw.length() > 63) {
+    webServer.send(400, "application/json",
+                   "{\"message\":\"WiFi SSID must be <=31 and password <=63 chars\"}");
+    return;
+  }
 
   prefs.begin("lorapnp", false);
-  prefs.putString("admin_pass", pass);
+  size_t written = prefs.putString("admin_pass", pass);
   if (ssid.length() > 0) {
     prefs.putString("wifi_ssid", ssid);
     prefs.putString("wifi_pass", wifiPw);
     prefs.putBool("wifi_sta_en", true);
   }
-  prefs.putBool("provisioned", true);
+  // Only mark provisioned if the password actually persisted — otherwise a failed
+  // write would leave provisioned=true with an empty admin_pass.
+  bool ok = (written == pass.length());
+  if (ok) prefs.putBool("provisioned", true);
   prefs.end();
+
+  if (!ok) {
+    webServer.send(500, "application/json",
+                   "{\"message\":\"failed to save credentials — try again\"}");
+    return;
+  }
 
   webServer.send(200, "application/json",
                  "{\"message\":\"Setup complete \\u2014 rebooting. Reconnect and log in with your new password.\"}");
@@ -2308,6 +2327,14 @@ void loop() {
       if (wifi_connected) {
         Serial.printf("  http://%s\n", WiFi.localIP().toString().c_str());
       }
+    } else if (cmd == "factory") {
+      Serial.println("Factory reset: clearing all settings (provisioning, admin password, WiFi, MQTT)...");
+      prefs.begin("lorapnp", false);
+      prefs.clear();   // wipes the whole "lorapnp" namespace: provisioned, admin_pass, wifi_*, mqtt_*
+      prefs.end();
+      Serial.println("Done — rebooting to the setup wizard.");
+      delay(200);
+      ESP.restart();
     } else if (cmd.length() > 0) {
       Serial.println("Commands:");
       Serial.println("  config <node_id> <interval_ms>");
@@ -2316,6 +2343,7 @@ void loop() {
       Serial.println("  wifi <ssid> <password>");
       Serial.println("  wifi off");
       Serial.println("  wifi status");
+      Serial.println("  factory   (erase ALL settings incl. admin password)");
     }
   }
 }
