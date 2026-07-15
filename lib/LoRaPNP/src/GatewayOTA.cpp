@@ -39,11 +39,15 @@ void GatewayOTA::handleForm() {
     server_->send_P(200, "text/html", UPLOAD_FORM);
 }
 
-void GatewayOTA::reset() {
+void GatewayOTA::freeHash() {
     if (hashing_) {
         mbedtls_sha256_free(&sha_);
         hashing_ = false;
     }
+}
+
+void GatewayOTA::reset() {
+    freeHash();
     active_ = false;
     failed_ = false;
     verified_ = false;
@@ -57,6 +61,7 @@ void GatewayOTA::fail(const char* msg) {
         failed_ = true;
         err_ = msg;
     }
+    freeHash();   // release the SHA context on every terminal error path
 }
 
 void GatewayOTA::emit(const uint8_t* data, size_t len) {
@@ -135,11 +140,10 @@ void GatewayOTA::handleUpload() {
 
         uint8_t hash[32];
         mbedtls_sha256_finish(&sha_, hash);
-        mbedtls_sha256_free(&sha_);
-        hashing_ = false;
+        freeHash();
 
         if (!verifySignature(hash, tail_)) { fail("signature verification failed"); Update.abort(); break; }
-        if (!Update.end(true))             { fail("Update.end failed");             break; }
+        if (!Update.end(true))             { fail("Update.end failed");             Update.abort(); break; }
         verified_ = true;
         break;
     }

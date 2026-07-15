@@ -39,6 +39,7 @@ private:
 
     void reset();
     void fail(const char* msg);
+    void freeHash();                                    // idempotent SHA-ctx release
     void emit(const uint8_t* data, size_t len);         // Update.write + hash
     void feed(const uint8_t* buf, size_t len);          // tail-strip window
     bool verifySignature(const uint8_t* hash, const uint8_t* sig);
