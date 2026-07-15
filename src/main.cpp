@@ -8,6 +8,7 @@
 #include <Preferences.h>
 #include <PubSubClient.h>
 #include <ESPmDNS.h>
+#include <esp_random.h>
 #include "Packet.h"
 #include "Types.h"
 #include "BLEProtocol.h"
@@ -58,6 +59,11 @@ static const char* ADMIN_USER = "admin";
 static const char* AUTH_REALM = "LoRaVox Gateway";  // must match GatewayOTA's realm
 bool gatewayProvisioned = false;
 char adminPass[64] = {0};
+// First-boot proof-of-presence: a 6-digit PIN shown on the OLED (RAM-only,
+// regenerated each boot). The wizard must echo it, so only someone physically
+// looking at the gateway's screen can provision it — closing the open-AP race.
+char setupPin[8] = {0};
+uint8_t setupPinFails = 0;
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
 bool mqtt_enabled = false;
@@ -247,6 +253,13 @@ void updateDisplay(const char* line1, const char* line2 = "", const char* line3 
 void updateStatusDisplay() {
   char line1[32], line2[32], line3[32];
 
+  // Before setup: show the wizard PIN so the operator can enter it at lorapnp.local.
+  if (!gatewayProvisioned) {
+    snprintf(line2, sizeof(line2), "PIN: %s", setupPin);
+    updateDisplay("** SETUP MODE **", line2, "-> lorapnp.local");
+    return;
+  }
+
   // Count active nodes
   uint8_t active_nodes = 0;
   for (int i = 0; i < 32; i++) {
@@ -274,6 +287,12 @@ void updateStatusDisplay() {
   }
 
   updateDisplay(line1, line2, line3);
+}
+
+// Generate a fresh 6-digit setup PIN (hardware RNG).
+void generateSetupPin() {
+  snprintf(setupPin, sizeof(setupPin), "%06u", (unsigned)(esp_random() % 1000000u));
+  setupPinFails = 0;
 }
 
 // Load provisioning state + admin password from NVS.
@@ -315,8 +334,11 @@ static const char SETUP_HTML[] PROGMEM =
     "h1{font-size:1.2rem}label{display:block;margin:.8rem 0 .2rem}input{width:100%;padding:.5rem;box-sizing:border-box}"
     "button{margin-top:1rem;padding:.6rem 1rem;font-size:1rem}small{color:#999}#s{margin-top:1rem}</style>"
     "<h1>Gateway Setup</h1>"
-    "<p>Set an admin password for this gateway. Optionally connect it to your WiFi.</p>"
+    "<p>Enter the PIN shown on the gateway screen, then set an admin password. "
+    "Optionally connect it to your WiFi.</p>"
     "<form id=f>"
+    "<label>Setup PIN <small>(shown on the gateway screen)</small></label>"
+    "<input name=pin required inputmode=numeric pattern='[0-9]*' maxlength=6 autocomplete=off>"
     "<label>Admin password <small>(8-63 chars)</small></label><input type=password name=password required minlength=8 maxlength=63>"
     "<label>Confirm password</label><input type=password name=confirm required minlength=8 maxlength=63>"
     "<label>Home WiFi SSID <small>(optional)</small></label><input name=ssid maxlength=31>"
@@ -345,6 +367,15 @@ void handleSetupSave() {
     webServer.send(403, "application/json", "{\"message\":\"already configured\"}");
     return;
   }
+  // Proof of physical presence: the PIN is only visible on the gateway's OLED.
+  String pin = webServer.arg("pin");
+  if (setupPin[0] == '\0' || strcmp(pin.c_str(), setupPin) != 0) {
+    if (++setupPinFails >= 5) generateSetupPin();  // rotate — an attacker can't see the new PIN
+    webServer.send(403, "application/json",
+                   "{\"message\":\"invalid setup PIN \\u2014 check the number on the gateway screen\"}");
+    return;
+  }
+
   String pass    = webServer.arg("password");
   String confirm = webServer.arg("confirm");
   String ssid    = webServer.arg("ssid");
@@ -1919,6 +1950,7 @@ void setup() {
 
   // Register web routes
   loadAuthConfig();  // provisioning state + admin password (gates the routes below)
+  if (!gatewayProvisioned) generateSetupPin();  // PIN shown on OLED for the wizard
   webServer.on("/", handleDashboard);
   webServer.on("/api", handleRoot);
   webServer.on("/api/rename", HTTP_POST, handleRename);
