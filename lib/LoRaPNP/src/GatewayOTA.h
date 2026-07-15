@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <WebServer.h>
 #include <mbedtls/sha256.h>
+#include <functional>
 
 namespace lorapnp {
 
@@ -25,7 +26,13 @@ namespace lorapnp {
 class GatewayOTA {
 public:
     // Register routes on an already-constructed WebServer (call before or after begin()).
-    void begin(WebServer* server);
+    // authFn: returns true iff the current request is authenticated. Checked BEFORE the
+    //         OTA partition is touched, so an unauthenticated POST cannot erase flash.
+    //         Pass nullptr to leave /update unauthenticated.
+    // realm:  HTTP auth realm for the Digest challenge — MUST match the rest of the site
+    //         so the browser reuses one login. Must outlive this object (string literal).
+    void begin(WebServer* server, std::function<bool()> authFn = nullptr,
+               const char* realm = "LoRaVox Gateway");
 
     // Call from loop(): performs the deferred reboot after a verified update.
     void loop();
@@ -38,6 +45,7 @@ private:
     void handleUpload();    // POST /update (streaming upload callback)
 
     void reset();
+    bool authed();                                      // request passes authFn_ (or no auth set)
     void fail(const char* msg);
     void freeHash();                                    // idempotent SHA-ctx release
     void emit(const uint8_t* data, size_t len);         // Update.write + hash
@@ -45,11 +53,14 @@ private:
     bool verifySignature(const uint8_t* hash, const uint8_t* sig);
 
     WebServer* server_ = nullptr;
+    std::function<bool()> authFn_;   // request-authentication check (may be null)
+    const char* realm_ = "LoRaVox Gateway";
 
     bool active_   = false;   // an upload is being processed
     bool hashing_  = false;   // sha ctx initialised (needs free)
     bool failed_   = false;
     bool verified_ = false;
+    bool unauth_   = false;   // upload rejected: not authenticated
     const char* err_ = nullptr;
 
     size_t   fw_bytes_ = 0;   // firmware bytes written so far (excludes signature)

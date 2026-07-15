@@ -49,6 +49,15 @@ SSD1306Wire display(0x3c, I2C_SDA, I2C_SCL);
 WebServer webServer(80);
 GatewayOTA gatewayOTA;  // WiFi self-update endpoint (/update)
 Preferences prefs;
+
+// ---- Web auth / first-boot provisioning ----
+// Digest auth (password never on the wire); the plaintext admin password is stored in
+// NVS. Until the gateway is provisioned via the /setup wizard, every protected route
+// redirects there and the AP stays open so the operator can reach the wizard.
+static const char* ADMIN_USER = "admin";
+static const char* AUTH_REALM = "LoRaVox Gateway";  // must match GatewayOTA's realm
+bool gatewayProvisioned = false;
+char adminPass[64] = {0};
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
 bool mqtt_enabled = false;
@@ -267,7 +276,100 @@ void updateStatusDisplay() {
   updateDisplay(line1, line2, line3);
 }
 
+// Load provisioning state + admin password from NVS.
+void loadAuthConfig() {
+  prefs.begin("lorapnp", true);
+  gatewayProvisioned = prefs.getBool("provisioned", false);
+  prefs.getString("admin_pass", adminPass, sizeof(adminPass));
+  prefs.end();
+}
+
+// True iff the current request carries valid admin credentials.
+bool clientAuthed() {
+  return gatewayProvisioned && webServer.authenticate(ADMIN_USER, adminPass);
+}
+
+// Gate a protected route. Returns false (and sends the appropriate response) when the
+// caller should stop: redirect to the wizard if unprovisioned, else a Digest challenge.
+bool requireAuth() {
+  if (!gatewayProvisioned) {
+    webServer.sendHeader("Location", "/setup");
+    webServer.send(302, "text/plain", "Setup required");
+    return false;
+  }
+  if (!webServer.authenticate(ADMIN_USER, adminPass)) {
+    webServer.requestAuthentication(DIGEST_AUTH, AUTH_REALM, "Authentication required");
+    return false;
+  }
+  return true;
+}
+
+static const char SETUP_HTML[] PROGMEM =
+    "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'>"
+    "<title>LoRaVox Gateway Setup</title>"
+    "<style>body{font-family:system-ui;background:#111;color:#eee;max-width:26rem;margin:2rem auto;padding:0 1rem}"
+    "h1{font-size:1.2rem}label{display:block;margin:.8rem 0 .2rem}input{width:100%;padding:.5rem;box-sizing:border-box}"
+    "button{margin-top:1rem;padding:.6rem 1rem;font-size:1rem}small{color:#999}#s{margin-top:1rem}</style>"
+    "<h1>Gateway Setup</h1>"
+    "<p>Set an admin password for this gateway. Optionally connect it to your WiFi.</p>"
+    "<form id=f>"
+    "<label>Admin password <small>(8-63 chars)</small></label><input type=password name=password required minlength=8 maxlength=63>"
+    "<label>Confirm password</label><input type=password name=confirm required minlength=8 maxlength=63>"
+    "<label>Home WiFi SSID <small>(optional)</small></label><input name=ssid>"
+    "<label>Home WiFi password</label><input type=password name=wifi_password>"
+    "<button>Save &amp; reboot</button></form><div id=s></div>"
+    "<script>f.onsubmit=async e=>{e.preventDefault();"
+    "if(f.password.value!==f.confirm.value){s.textContent='Passwords do not match';return;}"
+    "s.textContent='Saving...';let fd=new URLSearchParams(new FormData(f));"
+    "try{let r=await fetch('/setup',{method:'POST',body:fd});let j=await r.json();"
+    "s.textContent=(r.ok?'\\u2713 ':'\\u2717 ')+j.message;}catch(err){s.textContent='Failed: '+err;}};"
+    "</script>";
+
+// GET /setup — the first-boot wizard (locked once provisioned).
+void handleSetup() {
+  if (gatewayProvisioned) {
+    webServer.sendHeader("Location", "/");
+    webServer.send(302, "text/plain", "Already configured");
+    return;
+  }
+  webServer.send_P(200, "text/html", SETUP_HTML);
+}
+
+// POST /setup — persist admin password (+ optional WiFi), then reboot.
+void handleSetupSave() {
+  if (gatewayProvisioned) {
+    webServer.send(403, "application/json", "{\"message\":\"already configured\"}");
+    return;
+  }
+  String pass    = webServer.arg("password");
+  String confirm = webServer.arg("confirm");
+  String ssid    = webServer.arg("ssid");
+  String wifiPw  = webServer.arg("wifi_password");
+
+  if (pass.length() < 8 || pass.length() > 63 || pass != confirm) {
+    webServer.send(400, "application/json",
+                   "{\"message\":\"password must be 8-63 chars and match confirmation\"}");
+    return;
+  }
+
+  prefs.begin("lorapnp", false);
+  prefs.putString("admin_pass", pass);
+  if (ssid.length() > 0) {
+    prefs.putString("wifi_ssid", ssid);
+    prefs.putString("wifi_pass", wifiPw);
+    prefs.putBool("wifi_sta_en", true);
+  }
+  prefs.putBool("provisioned", true);
+  prefs.end();
+
+  webServer.send(200, "application/json",
+                 "{\"message\":\"Setup complete \\u2014 rebooting. Reconnect and log in with your new password.\"}");
+  delay(1200);
+  ESP.restart();
+}
+
 void handleRoot() {
+  if (!requireAuth()) return;
   StaticJsonDocument<4096> doc;
   doc["gateway_id"] = gateway_id;
   doc["active_nodes"] = 0;
@@ -352,6 +454,7 @@ void handleRoot() {
 }
 
 void handleDashboard() {
+  if (!requireAuth()) return;
   const char* html = R"rawliteral(
 <!DOCTYPE html>
 <html lang="en">
@@ -927,6 +1030,7 @@ void handleDashboard() {
 }
 
 void handleRename() {
+  if (!requireAuth()) return;
   if (webServer.method() != HTTP_POST) {
     webServer.send(405, "text/plain", "Method not allowed");
     return;
@@ -1018,6 +1122,7 @@ void handleRename() {
 }
 
 void handleReboot() {
+  if (!requireAuth()) return;
   if (webServer.method() != HTTP_POST) {
     webServer.send(405, "application/json", "{\"error\":\"Method not allowed\"}");
     return;
@@ -1060,6 +1165,7 @@ void handleReboot() {
 }
 
 void handleWifiConfig() {
+  if (!requireAuth()) return;
   if (webServer.method() != HTTP_POST) {
     webServer.send(405, "text/plain", "Method not allowed");
     return;
@@ -1793,12 +1899,15 @@ void setup() {
   }
 
   // Register web routes
+  loadAuthConfig();  // provisioning state + admin password (gates the routes below)
   webServer.on("/", handleDashboard);
   webServer.on("/api", handleRoot);
   webServer.on("/api/rename", HTTP_POST, handleRename);
   webServer.on("/api/reboot", HTTP_POST, handleReboot);
   webServer.on("/api/wifi", HTTP_POST, handleWifiConfig);
-  gatewayOTA.begin(&webServer);  // GET/POST /update — signed WiFi self-update
+  webServer.on("/setup", HTTP_GET, handleSetup);       // first-boot wizard
+  webServer.on("/setup", HTTP_POST, handleSetupSave);
+  gatewayOTA.begin(&webServer, clientAuthed, AUTH_REALM);  // signed WiFi self-update, auth-gated
   webServer.begin();
   Serial.println("Web server started");
   Serial.println("Dashboard: http://lorapnp.local or http://192.168.4.1");

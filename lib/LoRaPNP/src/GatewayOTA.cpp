@@ -22,11 +22,18 @@ static const char UPLOAD_FORM[] PROGMEM =
     "let j=await r.json();s.textContent=(r.ok?'\\u2713 ':'\\u2717 ')+j.message;}"
     "catch(err){s.textContent='Upload failed: '+err;}};</script>";
 
-void GatewayOTA::begin(WebServer* server) {
+void GatewayOTA::begin(WebServer* server, std::function<bool()> authFn, const char* realm) {
     server_ = server;
+    authFn_ = authFn;
+    realm_  = realm;
     server_->on("/update", HTTP_GET,  [this]() { handleForm(); });
     server_->on("/update", HTTP_POST, [this]() { handleFinish(); },
                                       [this]() { handleUpload(); });
+}
+
+// True iff no auth is configured or the current request is authenticated.
+bool GatewayOTA::authed() {
+    return !authFn_ || authFn_();
 }
 
 void GatewayOTA::loop() {
@@ -36,6 +43,7 @@ void GatewayOTA::loop() {
 }
 
 void GatewayOTA::handleForm() {
+    if (!authed()) { server_->requestAuthentication(DIGEST_AUTH, realm_); return; }
     server_->send_P(200, "text/html", UPLOAD_FORM);
 }
 
@@ -51,6 +59,7 @@ void GatewayOTA::reset() {
     active_ = false;
     failed_ = false;
     verified_ = false;
+    unauth_ = false;
     err_ = nullptr;
     fw_bytes_ = 0;
     tail_len_ = 0;
@@ -119,6 +128,8 @@ void GatewayOTA::handleUpload() {
     switch (up.status) {
     case UPLOAD_FILE_START:
         reset();
+        // Reject BEFORE Update.begin() — an unauthenticated POST must never erase flash.
+        if (!authed()) { unauth_ = true; break; }
         active_ = true;
         mbedtls_sha256_init(&sha_);
         mbedtls_sha256_starts(&sha_, 0);   // 0 => SHA-256
@@ -156,6 +167,7 @@ void GatewayOTA::handleUpload() {
 }
 
 void GatewayOTA::handleFinish() {
+    if (unauth_) { server_->requestAuthentication(DIGEST_AUTH, realm_); active_ = false; return; }
     if (verified_) {
         server_->send(200, "application/json",
                       "{\"status\":\"ok\",\"message\":\"Firmware verified — rebooting\"}");
