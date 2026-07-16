@@ -400,12 +400,11 @@ bool sendPendingSensorData();
 
 // ========== I2C SENSOR DETECTION ==========
 // Report bus devices that ACK but match no driver, so an installer can see a
-// miswired or unsupported sensor instead of it silently vanishing.
-// `known` holds the addresses already claimed by drivers this scan.
-// Returns the number of unknown devices appended to i2c_sensors[].
-//
-// >>> LEARNING-MODE CONTRIBUTION POINT — currently a no-op stub. <<<
-// See the message following this edit for the design decision and guidance.
+// miswired or unsupported sensor instead of it silently vanishing. Each such
+// address is appended to i2c_sensors[] as a SENSOR_TYPE_UNKNOWN_I2C entry
+// (descriptor sent, but no data — the read path skips unknown types).
+// `known` holds the addresses already claimed by drivers this scan; matches
+// are skipped. Returns the number of unknown devices appended.
 uint8_t reportUnknownI2CDevices(const uint8_t* known, uint8_t known_count) {
   uint8_t added = 0;
   for (uint8_t addr = 0x03; addr < 0x78; addr++) {
