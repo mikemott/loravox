@@ -7,7 +7,7 @@
 | 1 | Gateway registry persistence, so node IDs survive gateway reboot | ✓ Complete | Gateway persists UID-to-node-ID mappings and sensor descriptors. Runtime registry rebuilds from STATUS packets with UID. |
 | 2 | Rejoin/hello path for already-configured nodes | ✓ Complete | Configured nodes send reconnect JOIN_REQUEST with periodic 6s retries. STATUS includes UID for gateway registry recovery. |
 | 3 | ACK/retry for join and data | ✓ Complete | JOIN_ACCEPT, STATUS, and SENSOR_DATA have ACK/retry with 3 retries and 6s timeout. Gateway suppresses duplicates. |
-| 4 | Sensor descriptor packet plus fake sensor payload | Partial | `SENSOR_DESCRIPTOR` and `SENSOR_DATA` packets exist. Fake sensor path is working. I2C auto-detect/probe for real sensor stacks is still pending, so this is not fully plug-and-play yet. |
+| 4 | Sensor descriptor packet plus fake sensor payload | Integrated (pending HW test) | `SENSOR_DESCRIPTOR`/`SENSOR_DATA` packets work. Real I2C auto-detect now runs via the driver registry (`node/src/sensors/`), replacing the hardcoded SHT40-only path — add a driver struct, it's detected, no `main.cpp` change. SHT40 + BMP581 drivers active; unclaimed bus devices reported as `SENSOR_TYPE_UNKNOWN_I2C`. Not yet flashed to hardware (no toolchain in dev env). |
 | 5 | Gateway serial registry table with live link stats | ✓ Complete | Formatted table every 10s showing node ID, RSSI, SNR, battery, uptime, heap, sensor count, last seen. |
 | 6 | Config update packet for report interval | ✓ Complete | Gateway sends CONFIG_UPDATE via serial command `config <node_id> <interval_ms>`. Node applies, persists, and sends CONFIG_ACK. |
 | 7 | Factory reset path for node NVS | ✓ Complete | Serial commands `reset` or `factory` clear Preferences and restart node. |
@@ -25,7 +25,7 @@
 | Rename system (all tiers) | ✓ Complete | Click-to-rename stations, I2C sensors, and remote sensors from dashboard. Names persist in NVS (gateway + station). Extended NAME_UPDATE protocol propagates names via LoRa. Three NameTypes: STATION, I2C_SENSOR, REMOTE_SENSOR. See NAMING-SYSTEM.md |
 | Terminology update | ✓ Complete | "Node" → "Station" throughout codebase, dashboard, and docs. Better describes multi-function sensor platforms (I2C + BLE relay + LoRa). Backward compatible - existing deployments unaffected. |
 | BLE name characteristic | Ready | BLE characteristic UUID `0x4C51` defined for future remote sensor displays. When remote sensors have OLED/e-ink, station can write custom names via BLE. Infrastructure complete, waiting on display hardware. |
-| I2C plug-and-play sensor detection | Planned | Scan I2C bus, ignore onboard devices, probe known sensors, and report descriptors to gateway. Fake sensor descriptor path is now proven, but real discovery/probing is still pending. |
+| I2C plug-and-play sensor detection | Integrated (pending HW test) | Driver-registry framework (`node/src/sensors/`) wired into the node: `scanI2CSensors()` scans Wire1 (QWIIC), probes registered drivers, reports descriptors, and flags unclaimed devices as unknown. Extensible via one driver struct per sensor. Needs on-hardware verification. |
 | Optional I2C module descriptor EEPROM | Planned | Useful for custom sensor stacks and analog modules. |
 | Modular sensor driver architecture | Planned | Abstract sensor drivers for easy addition of new sensor types. See Task #1. |
 

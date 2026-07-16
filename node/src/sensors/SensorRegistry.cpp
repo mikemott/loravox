@@ -1,10 +1,13 @@
 #include "SensorRegistry.h"
 #include "drivers/SHT40Driver.h"
 #include "drivers/BMP581Driver.h"
-#include "drivers/SoilMoistureDriver.h"
-#include "drivers/XM125Driver.h"
 
-// Registry of all known I2C sensors
+// Registry of all known I2C sensors.
+//
+// To add plug-and-play support for a new sensor, drop a driver pair into
+// drivers/ (see SHT40Driver.* for the pattern) and add one entry below —
+// nothing in main.cpp needs to change. `addresses` is the set of 7-bit I2C
+// addresses the part can appear at, zero-terminated (max 3 + terminator).
 const SensorDriver i2c_sensor_drivers[] = {
   {
     .name = "SHT40",
@@ -17,18 +20,6 @@ const SensorDriver i2c_sensor_drivers[] = {
     .addresses = {0x46, 0x47, 0},
     .detect = detectBMP581,
     .addSensors = addBMP581Sensors
-  },
-  {
-    .name = "Soil Moisture",
-    .addresses = {0x28, 0},
-    .detect = detectSoilMoisture,
-    .addSensors = addSoilMoistureSensor
-  },
-  {
-    .name = "XM125",
-    .addresses = {0x52, 0},
-    .detect = detectXM125,
-    .addSensors = addXM125Sensor
   }
 };
 
