@@ -416,8 +416,9 @@ void handleDashboard() {
       font-size: 12px;
       font-weight: 600;
     }
-    .badge.station { background: #17bf63; }
+    .badge.device { background: #17bf63; }
     .badge.remote { background: #f45d22; }
+    .badge.relay { background: #7856ff; }
 
     .signal {
       display: flex;
@@ -608,7 +609,7 @@ void handleDashboard() {
     </div>
     <div class="stats">
       <div class="stat">
-        <span class="stat-label">Stations</span>
+        <span class="stat-label">Field Devices</span>
         <span class="stat-value" id="node-count">-</span>
       </div>
       <div class="stat">
@@ -721,8 +722,8 @@ void handleDashboard() {
       .catch(e => alert('Error: ' + e.message));
     }
 
-    function rebootStation(nodeId, nodeName) {
-      if (!confirm(`Reboot ${nodeName}?\n\nStation will restart and re-detect all I2C sensors.\n\nThis is useful after plugging in new sensors.`)) {
+    function rebootDevice(nodeId, nodeName) {
+      if (!confirm(`Reboot ${nodeName}?\n\nDevice will restart and re-detect all I2C sensors.\n\nThis is useful after plugging in new sensors.`)) {
         return;
       }
 
@@ -734,7 +735,7 @@ void handleDashboard() {
       .then(r => r.json())
       .then(data => {
         if (data.success) {
-          alert(`✓ Reboot command sent to ${nodeName}\n\nStation will restart in ~30 seconds and appear offline briefly.`);
+          alert(`✓ Reboot command sent to ${nodeName}\n\nDevice will restart in ~30 seconds and appear offline briefly.`);
         } else {
           alert('Failed to reboot: ' + (data.error || 'Unknown error'));
         }
@@ -761,7 +762,7 @@ void handleDashboard() {
       container.innerHTML = '';
 
       if (!data.nodes || data.nodes.length === 0) {
-        container.innerHTML = '<div class="loading">No stations connected</div>';
+        container.innerHTML = '<div class="loading">No field devices connected</div>';
         document.getElementById('sensor-count').textContent = '0';
         return;
       }
@@ -813,11 +814,12 @@ void handleDashboard() {
           <div class="card ${isOffline ? 'offline' : ''}">
             <div class="card-header">
               <div class="card-title">
-                <span class="badge station" style="cursor:pointer;"
-                  onclick="renameItem('node', {node_id: ${node.id}}, '${node.name || 'Station ' + node.id}')"
-                  title="Click to rename station">
-                  ${node.name || 'Station ' + node.id}
+                <span class="badge device" style="cursor:pointer;"
+                  onclick="renameItem('node', {node_id: ${node.id}}, '${node.name || 'Device ' + node.id}')"
+                  title="Click to rename device">
+                  ${node.name || 'Device ' + node.id}
                 </span>
+                ${node.can_relay ? '<span class="badge relay" title="Relays remote sensors">🔗 Relay</span>' : ''}
                 ${node.ble_sensors && node.ble_sensors.length > 0 ? `<span class="badge remote">${node.ble_sensors.length} Remote</span>` : ''}
               </div>
               <div class="signal">
@@ -850,8 +852,8 @@ void handleDashboard() {
             ${sensorsHtml || bleSensorsHtml ? '<div class="sensors">' + sensorsHtml + bleSensorsHtml + '</div>' : ''}
 
             <div class="timestamp">Last seen: ${node.last_seen}s ago</div>
-            <button class="btn-reboot" onclick="rebootStation(${node.id}, '${node.name || 'Station ' + node.id}')" title="Reboot station to detect new sensors">
-              🔄 Reboot Station
+            <button class="btn-reboot" onclick="rebootDevice(${node.id}, '${node.name || 'Device ' + node.id}')" title="Reboot device to detect new sensors">
+              🔄 Reboot Device
             </button>
           </div>`;
       });
@@ -1036,7 +1038,7 @@ void handleReboot() {
   // Find station in registry
   int slot = findActiveNodeById(node_id);
   if (slot < 0) {
-    webServer.send(404, "application/json", "{\"error\":\"Station not found\"}");
+    webServer.send(404, "application/json", "{\"error\":\"Field device not found\"}");
     return;
   }
 
