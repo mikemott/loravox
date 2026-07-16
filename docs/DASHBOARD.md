@@ -70,9 +70,14 @@ wifi off
 
 ## Dashboard Features
 
+> The dashboard shows **two device types**: the Gateway and its **field devices**. A
+> "node" here is a field device on the LoRa network; a *relaying* field device (what
+> earlier docs called a *station*) is marked with a **Relay** tag. "Station mode" elsewhere
+> in this doc refers to WiFi STA mode and is unrelated to device type.
+
 ### Header Stats
-- **Nodes**: Active LoRa nodes connected
-- **BLE Sensors**: Remote BLE sensors discovered
+- **Nodes**: Active field devices connected over LoRa
+- **BLE Sensors**: Remote BLE sensors (leaf field devices) discovered
 - **Total Sensors**: All sensors in the network
 
 ### Node Cards

@@ -2,10 +2,14 @@
 
 ## Overview
 
-The LoRa PNP network now supports comprehensive custom naming across all three tiers:
+The network has **two device types** — a **Gateway** and **field devices** — and custom
+naming works across both, plus the sensors they carry. A field device's role is just a
+capability preset, not a separate type:
 - **Gateway** - Central hub with WiFi/internet
-- **Station** - Multi-function sensor platform (I2C sensors + BLE relay + LoRa)
-- **Remote Sensor** - BLE-only wireless sensor
+- **Field device (relay)** - a relaying field device (I2C sensors + BLE relay + LoRa);
+  this is what earlier docs called a *station*, and the dashboard marks it with a **Relay** tag
+- **Field device (leaf)** - a battery-first BLE-only sensor; this is what earlier docs
+  called a *remote sensor*
 
 All names persist across reboots and propagate through the network automatically.
 
@@ -550,7 +554,7 @@ Last seen: 5s ago
 - I2C sensor names stored on station
 - Remote sensor names stored on station
 - Everything persists across reboots
-- Extended protocol supports all three types
+- Extended protocol supports all three name types (station, I2C sensor, remote sensor)
 - BLE characteristic defined for future displays
 
 **Ready to deploy:** All code compiled and tested!

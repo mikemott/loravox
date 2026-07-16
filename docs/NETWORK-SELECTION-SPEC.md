@@ -228,15 +228,16 @@ LoRa is **always available** as the fallback transport. No connection state need
 
 ## 6. Implementation Strategy
 
-### 6.1 Node Types
+### 6.1 Device Types & Roles
 
-Different node types have different transport capabilities:
+There are **two device types** — the **Gateway** and **field devices** — and a field
+device's role is a capability preset. Transport capability differs by role:
 
-| Node Type | WiFi | BLE | LoRa |
+| Role | WiFi | BLE | LoRa |
 |-----------|------|-----|------|
-| **Coordinator** | ✅ AP+STA | ✅ Central | ✅ Always-on |
-| **Node/Station** | ✅ STA mode (optional) | ✅ Peripheral | ✅ Always-on |
-| **Remote Sensor** | ❌ No WiFi | ✅ Peripheral | ✅ Sleep/wake |
+| **Gateway** (coordinator) | ✅ AP+STA | ✅ Central | ✅ Always-on |
+| **Field device (relay / "station")** | ✅ STA mode (optional) | ✅ Peripheral | ✅ Always-on |
+| **Field device (leaf / remote sensor)** | ❌ No WiFi | ✅ Peripheral | ✅ Sleep/wake |
 
 **WiFi Credential Sharing (Secure Implementation):**
 

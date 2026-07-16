@@ -1,6 +1,13 @@
-# Three-Tier System Testing Guide
+# Gateway + Field-Device Testing Guide
 
-Complete end-to-end testing for Remote Sensor → Node → Gateway architecture.
+> **Note:** The old "three tiers" were relabeled to **two device types** — a **Gateway**
+> and **field devices**. The three builds this guide exercises (the gateway, the relaying
+> `node` field device, and the leaf `remote_sensor` field device) are the gateway plus two
+> field-device capability presets, not three separate device types. The filename is kept
+> so other docs' links still resolve.
+
+Complete end-to-end testing for the gateway and its field devices: a leaf remote sensor
+forwarding through a relaying field device (`node`) to the Gateway.
 
 ## Hardware Setup
 
