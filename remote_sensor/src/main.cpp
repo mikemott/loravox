@@ -5,6 +5,7 @@
 #include <NimBLEDevice.h>
 #include "BLEProtocol.h"
 #include "Types.h"
+#include "DeviceIdentity.h"   // shared MAC->UID derivation
 
 using namespace lorapnp;
 
@@ -41,10 +42,7 @@ RTC_DATA_ATTR uint32_t boot_count = 0;
  * Initialize device UID from MAC address
  */
 void loadDeviceUID() {
-    uint64_t mac = ESP.getEfuseMac();
-    for (uint8_t i = 0; i < 6; i++) {
-        device_uid[i] = (mac >> (8 * (5 - i))) & 0xFF;
-    }
+    loadDeviceUid(device_uid);  // shared MAC->UID derivation (lib/DeviceIdentity.h)
     formatBLEUID(device_uid, device_uid_str, sizeof(device_uid_str));
 }
 

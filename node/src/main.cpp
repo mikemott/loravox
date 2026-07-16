@@ -9,6 +9,7 @@
 #include "BLEProtocol.h"
 #include "Packet.h"
 #include "Types.h"
+#include "DeviceIdentity.h"          // shared MAC->UID derivation
 #include "sensors/SensorRegistry.h"  // I2CSensor + driver-registry auto-detection
 
 using namespace lorapnp;
@@ -195,10 +196,7 @@ void updateStatusDisplay() {
 }
 
 void loadDeviceUid() {
-  uint64_t mac = ESP.getEfuseMac();
-  for (uint8_t i = 0; i < DEVICE_UID_LEN; i++) {
-    device_uid[i] = (mac >> (8 * (DEVICE_UID_LEN - 1 - i))) & 0xFF;
-  }
+  lorapnp::loadDeviceUid(device_uid);  // shared MAC->UID derivation (lib/DeviceIdentity.h)
 }
 
 void printUid() {
