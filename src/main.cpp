@@ -83,6 +83,7 @@ struct NodeInfo {
   uint32_t uptime_s;
   uint32_t free_heap;
   uint8_t status_flags;
+  bool can_relay;        // field device relays BLE remote sensors (a "station"); from STATUS_FLAG_CAN_RELAY
   uint16_t last_seq;
   uint32_t join_time;
   bool join_ack_pending;
@@ -286,6 +287,7 @@ void handleRoot() {
       n["id"] = nodes[i].node_id;
       n["name"] = getNodeName(nodes[i].node_id);
       n["type"] = "node";
+      n["can_relay"] = nodes[i].can_relay;
       n["rssi"] = nodes[i].rssi;
       n["snr"] = nodes[i].snr;
       n["battery"] = nodes[i].battery_v;
@@ -1438,6 +1440,7 @@ void handleStatus(const Packet& pkt, int16_t rssi, float snr) {
     nodes[slot].uptime_s = uptime_s;
     nodes[slot].free_heap = free_heap;
     nodes[slot].status_flags = status_flags;
+    nodes[slot].can_relay = (status_flags & STATUS_FLAG_CAN_RELAY) != 0;
     nodes[slot].last_seq = pkt.seq;
     Serial.printf("STATUS from node %d: RSSI=%d SNR=%.1f Battery=%.2fV Uptime=%lus Heap=%lu Flags=0x%02X\n",
                   src_id, rssi, (double)snr, (double)battery,

@@ -356,7 +356,12 @@ void sendJoinRequest() {
 
 void sendStatus() {
   const uint16_t battery_mv = 3700;
-  const uint8_t status_flags = 0x00;
+  uint8_t status_flags = 0x00;
+#ifdef ENABLE_BLE_SCAN
+  // This field device runs the BLE-scan-and-forward path, so it can relay
+  // remote-sensor data — report that capability to the gateway.
+  status_flags |= STATUS_FLAG_CAN_RELAY;
+#endif
 
   pending_status = Packet();
   pending_status.type = MessageType::STATUS;
