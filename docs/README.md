@@ -2,7 +2,7 @@
 
 **Version**: 1.0
 **Date**: 2026-07-04
-**Project**: Three-Tier LoRa Plug-and-Play Sensor Network
+**Project**: LoRa Plug-and-Play Sensor Network (two device types: Gateway + Field Device)
 
 ---
 
@@ -11,7 +11,7 @@
 **New to the project?** Start here:
 
 1. **Read**: `../MVP-Spec.md` - Understand the original LoRa protocol
-2. **Read**: `../BLE-PROTOCOL.md` - Learn about the three-tier architecture
+2. **Read**: `../BLE-PROTOCOL.md` - Learn about the gateway + field-device (relay/leaf) architecture
 3. **Review**: `hardware/HARDWARE-RECOMMENDATIONS.md` - Choose hardware
 4. **Order**: `hardware/SUPPLIER-REFERENCE.md` - Purchase components
 5. **Build**: `assembly/ASSEMBLY-GUIDE.md` - Assemble devices

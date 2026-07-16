@@ -8,7 +8,7 @@
 
 ## System Architecture
 
-Three-tier plug-and-play sensor network:
+Plug-and-play sensor network — two device types (Gateway + Field Device), shown here in a typical leaf → relay → gateway deployment:
 
 ```
 Remote Sensors (BLE, Battery)
