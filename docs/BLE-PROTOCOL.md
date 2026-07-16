@@ -2,7 +2,12 @@
 
 ## Overview
 
-Three-tier architecture for plug-and-play sensor network with extended range via BLE remote sensors.
+The network has **two device types**: a **Gateway** and **field devices**. A field
+device's role is a capability preset, not a fixed type — a *relaying field device* (the
+`node` firmware build, formerly called a "node"/"station") bridges BLE remote sensors to
+LoRa, while a leaf field device (the `remote_sensor` build) only advertises its own
+readings over BLE. This document specifies that BLE-to-LoRa path, which extends range via
+BLE remote sensors.
 
 ```
 Remote Sensor (BLE only)
@@ -15,6 +20,11 @@ Dashboard
 ```
 
 ## Device Profiles
+
+These are the **two device types** expressed as firmware builds: the gateway, and the
+field device in its two capability presets — the relay preset (`node`) and the leaf
+preset (`remote_sensor`). "Node" and "Remote Sensor" below are build/role names, not
+separate device types.
 
 ### Profile 1: Gateway
 - **Hardware**: T3-S3 with LoRa + WiFi + Display
@@ -29,9 +39,9 @@ Dashboard
   - Serial commands for configuration
   - OLED displays network status
 
-### Profile 2: Node
+### Profile 2: Node (relaying field device)
 - **Hardware**: T3-S3 with LoRa + BLE + Display + I2C
-- **Role**: Bridge between BLE sensors and gateway
+- **Role**: Relaying field device — bridges BLE sensors to the gateway (formerly "station")
 - **Firmware**: `node/src/main.cpp`
 - **Power**: Battery or mains (USB/solar)
 - **Capabilities**:
@@ -42,9 +52,9 @@ Dashboard
   - Deep sleep capable (when battery powered)
   - OLED displays node status + BLE sensor count
 
-### Profile 3: Remote Sensor
+### Profile 3: Remote Sensor (leaf field device)
 - **Hardware**: T3-S3 with BLE + Display + I2C
-- **Role**: Battery-powered remote sensor
+- **Role**: Battery-first leaf field device — reports only its own readings over BLE
 - **Firmware**: `remote_sensor/src/main.cpp` (NEW)
 - **Power**: Battery only (CR2032 or AA)
 - **Capabilities**:

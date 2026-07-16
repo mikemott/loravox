@@ -9,6 +9,7 @@
 #include "BLEProtocol.h"
 #include "Packet.h"
 #include "Types.h"
+#include "DeviceIdentity.h"          // shared MAC->UID derivation
 #include "sensors/SensorRegistry.h"  // I2CSensor + driver-registry auto-detection
 
 using namespace lorapnp;
@@ -195,10 +196,7 @@ void updateStatusDisplay() {
 }
 
 void loadDeviceUid() {
-  uint64_t mac = ESP.getEfuseMac();
-  for (uint8_t i = 0; i < DEVICE_UID_LEN; i++) {
-    device_uid[i] = (mac >> (8 * (DEVICE_UID_LEN - 1 - i))) & 0xFF;
-  }
+  lorapnp::loadDeviceUid(device_uid);  // shared MAC->UID derivation (lib/DeviceIdentity.h)
 }
 
 void printUid() {
@@ -356,7 +354,12 @@ void sendJoinRequest() {
 
 void sendStatus() {
   const uint16_t battery_mv = 3700;
-  const uint8_t status_flags = 0x00;
+  uint8_t status_flags = 0x00;
+#ifdef ENABLE_BLE_SCAN
+  // This field device runs the BLE-scan-and-forward path, so it can relay
+  // remote-sensor data — report that capability to the gateway.
+  status_flags |= STATUS_FLAG_CAN_RELAY;
+#endif
 
   pending_status = Packet();
   pending_status.type = MessageType::STATUS;

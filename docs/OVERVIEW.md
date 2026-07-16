@@ -4,7 +4,7 @@
 
 LoRaVox is a first-party, turnkey **sensor ecosystem** for remote monitoring where
 there is no connectivity at the sensor. A smart gateway bridges a self-organizing
-network of stations and sensors to the internet and to Grafana-based dashboards. The
+network of field devices and sensors to the internet and to Grafana-based dashboards. The
 whole system is designed around one promise: a network is **easy to deploy** and
 **easy to monitor**.
 
@@ -49,19 +49,28 @@ on remote or hard-to-reach assets.
 
 ## Architecture
 
-Three device tiers, an adaptive transport layer, and a data/dashboard layer.
+Two device types, an adaptive transport layer, and a data/dashboard layer.
 
-### The three tiers
+### The two device types
 
 - **Gateway — the core.** A WiFi/LTE internet bridge with on-board processing. It
   aggregates telemetry, manages the network, handles alerting, and either serves local
   dashboards (local tier) or feeds the cloud (cloud tier).
-- **Stations — range extenders.** LoRa repeaters that carry remote-sensor data back
-  toward the gateway and extend coverage across a property. A station may also host
-  sensors connected directly to it.
-- **Remote sensors — the catalog.** From simple (level, gate, GPS) to sophisticated
-  edge-AI devices (cameras, mmWave radar, mic arrays). They send **telemetry and
-  inferences — never raw data.**
+- **Field devices — everything else.** A single device type described by its
+  *capabilities*, not a fixed role:
+  - **Hosts sensors** — directly-attached I2C sensors and/or an edge-AI payload
+    (cameras, mmWave radar, mic arrays). Field devices report **telemetry and
+    inferences — never raw data.**
+  - **Relays** (optional) — forwards other devices' data toward the gateway and
+    extends coverage across a property. A relaying field device is what we used to
+    call a *station*; the dashboard marks it with a **Relay** tag. Relay is
+    independent of power — a battery device can relay.
+  - **Transport** — WiFi, BLE, and/or LoRa, chosen adaptively (below).
+  - **Power** — mains or battery.
+
+  The old *station* vs *remote sensor* labels are just two capability presets over
+  this one type: a station is a field device with relaying on; a remote sensor is a
+  battery-first leaf that only reports its own readings.
 
 ### Adaptive transport — the plug-and-play magic
 
@@ -117,7 +126,7 @@ first-class option, not a downgrade.
 
 ## Business model
 
-First-party hardware (gateways, stations, sensors) + a growing **catalog of sensor
+First-party hardware (gateways, field devices, sensors) + a growing **catalog of sensor
 types** + **custom configurations**, sold **turnkey through integrators**, with a
 **cloud subscription** for recurring revenue. The local tier is the on-prem,
 own-your-data option.
@@ -143,9 +152,9 @@ implementation stands today.
 
 **Built today** (prototype on ESP32-S3 / LilyGO T3-S3 + SX127x LoRa):
 
-- Three-tier protocol: auto-discovery/join, reliable messaging (ACK/retry),
+- Device protocol: auto-discovery/join, reliable messaging (ACK/retry),
   config-over-the-air, deep sleep, click-to-rename.
-- Remote sensors over BLE; stations bridge BLE→LoRa in a single-hop star.
+- Remote sensors over BLE; relaying field devices bridge BLE→LoRa in a single-hop star.
 - Local web dashboard, mDNS zero-config, MQTT/HTTP output.
 - Gateway WiFi self-update with signed firmware, first-boot setup wizard, and
   Digest-authenticated web API.
@@ -154,8 +163,10 @@ implementation stands today.
 
 - **Network-selection layer** (WiFi→BLE→LoRa adaptive) — foundation exists, not yet
   integrated.
-- **Station repeater / multi-hop** range extension (today is single-hop).
-- **Real plug-and-play sensor auto-detect** (I2C probing; only a fake sensor works now).
+- **Relay / multi-hop** range extension (today is single-hop).
+- **Real plug-and-play sensor auto-detect** — driver-registry I2C detection is now
+  integrated on the field device (SHT40/BMP581, unknown-device reporting); pending
+  on-hardware verification.
 - **Grafana + time-series storage** and the cloud/local tier split.
 - **Gateway→device OTA** across the network, including delta updates (delta currently
   unimplemented).

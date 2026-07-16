@@ -30,6 +30,12 @@ constexpr uint8_t CONFIG_UPDATE_MAX_RETRIES = 3;
 constexpr uint32_t REGISTRY_PRINT_INTERVAL_MS = 10000;
 constexpr uint32_t STATION_STALE_TIMEOUT_MS = 120000;
 
+// STATUS packet status_flags bitfield (payload[10]).
+// A field device self-reports its capabilities here, so the gateway can
+// classify it without a separate device-type field on the wire. In the
+// two-type model, "station" vs "leaf sensor" is just CAN_RELAY set or clear.
+constexpr uint8_t STATUS_FLAG_CAN_RELAY = 0x01;  // forwards BLE remote-sensor data (a relay / "station")
+
 enum class MessageType : uint8_t {
     DISCOVER       = 0x01,
     OFFER          = 0x02,

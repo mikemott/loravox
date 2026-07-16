@@ -30,6 +30,13 @@ This document serves as the authoritative reference for the LoRa PNP network pro
                                              └─────────────────┘
 ```
 
+In device-model terms this is **two device types**: the **Gateway** and **field
+devices**. The `Station/Node` box above is a *relaying field device* — a field device
+that forwards its own and others' data over LoRa (the dashboard tags it **Relay**); the
+`Remote Sensor` is a leaf field device that reaches the network over BLE. `node` and
+`node_id` remain the wire-level identifiers for any joined field device, regardless of
+its role.
+
 ### 1.2 Protocol Version
 
 - **Current Version**: `0x01`
