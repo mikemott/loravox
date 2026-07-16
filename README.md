@@ -4,11 +4,12 @@ A peer-to-peer LoRa mesh network implementation for ESP32 devices with BLE inter
 
 ## Overview
 
-LoRaVox is a robust LoRa communication system designed for building distributed sensor networks. The system supports three device types:
+LoRaVox is a robust LoRa communication system designed for building distributed sensor networks. The system has **two device types**:
 
-- **Coordinator**: Central hub that manages the network and provides BLE interface
-- **Node**: Sensor-equipped device with BLE capability for local interaction
-- **Remote Sensor**: Battery-powered sensor node for remote deployments
+- **Gateway**: Central hub that bridges the network to the internet, aggregates telemetry, and serves the dashboard.
+- **Field Device**: Everything in the field, described by its capabilities rather than a fixed role — it hosts sensors, optionally **relays** other devices' data (a relaying field device is what we used to call a "station"), and connects over WiFi, BLE, and/or LoRa. Relay is independent of power; a battery device can relay.
+
+See [docs/OVERVIEW.md](docs/OVERVIEW.md) for the full architecture.
 
 ## Features
 
@@ -33,9 +34,9 @@ Built for ESP32-S3 (LilyGO T3-S3) with SX1262 LoRa radio. See [hardware document
 ## Project Structure
 
 ```
-├── src/                    # Coordinator firmware
-├── node/                   # Node firmware with BLE
-├── remote_sensor/          # Remote sensor firmware
+├── src/                    # Gateway firmware
+├── node/                   # Field device (relay build: LoRa + BLE scan/forward)
+├── remote_sensor/          # Field device (leaf build: battery, BLE-only)
 ├── lib/LoRaPNP/           # Shared protocol library
 └── docs/                   # Technical documentation
 ```
