@@ -9,6 +9,7 @@
 #include "BLEProtocol.h"
 #include "Packet.h"
 #include "Types.h"
+#include "sensors/SensorRegistry.h"  // I2CSensor + driver-registry auto-detection
 
 using namespace lorapnp;
 
@@ -116,19 +117,15 @@ uint32_t last_sensor_ms = 0;
 constexpr uint32_t SENSOR_REPORT_INTERVAL_MS = 30000;
 constexpr uint8_t FAKE_SENSOR_ID = 1;
 
-// ========== I2C SENSOR DETECTION (EXPERIMENTAL) ==========
+// ========== I2C SENSOR DETECTION ==========
+// I2CSensor and the driver registry live in sensors/SensorRegistry.h.
+// sht4/bmp5 are defined by their drivers (sensors/drivers/*.cpp); we read
+// from them here in the sensor-report path, so declare them extern.
 constexpr uint8_t MAX_I2C_SENSORS = 8;
-struct I2CSensor {
-  uint8_t sensor_id;
-  uint8_t i2c_addr;
-  uint8_t sensor_type;
-  char label[17];
-  bool active;
-};
 I2CSensor i2c_sensors[MAX_I2C_SENSORS];
 uint8_t i2c_sensor_count = 0;
-Adafruit_SHT4x sht4;
-Adafruit_BMP5xx bmp5;
+extern Adafruit_SHT4x sht4;
+extern Adafruit_BMP5xx bmp5;
 // ========== END I2C SENSOR DETECTION ==========
 
 // ========== BLE REMOTE SENSOR SCANNING ==========
@@ -401,85 +398,58 @@ void sendSensorDescriptor() {
 
 bool sendPendingSensorData();
 
-// ========== I2C SENSOR DETECTION (EXPERIMENTAL) ==========
-void scanI2CBus() {
-  Serial.println("\n=== QWIIC I2C Bus Scan (Wire1) ===");
-  uint8_t device_count = 0;
+// ========== I2C SENSOR DETECTION ==========
+// Report bus devices that ACK but match no driver, so an installer can see a
+// miswired or unsupported sensor instead of it silently vanishing.
+// `known` holds the addresses already claimed by drivers this scan.
+// Returns the number of unknown devices appended to i2c_sensors[].
+//
+// >>> LEARNING-MODE CONTRIBUTION POINT — currently a no-op stub. <<<
+// See the message following this edit for the design decision and guidance.
+uint8_t reportUnknownI2CDevices(const uint8_t* known, uint8_t known_count) {
+  uint8_t added = 0;
+  for (uint8_t addr = 0x03; addr < 0x78; addr++) {
+    if (i2c_sensor_count + added >= MAX_I2C_SENSORS) break;
 
-  for (uint8_t addr = 1; addr < 127; addr++) {
     Wire1.beginTransmission(addr);
-    uint8_t error = Wire1.endTransmission();
+    if (Wire1.endTransmission() != 0) continue;  // nothing at this address
 
-    if (error == 0) {
-      Serial.printf("I2C device found at 0x%02X\n", addr);
-      device_count++;
+    bool claimed = false;
+    for (uint8_t i = 0; i < known_count; i++) {
+      if (known[i] == addr) { claimed = true; break; }
     }
-  }
+    if (claimed) continue;  // a driver already owns this device
 
-  if (device_count == 0) {
-    Serial.println("No I2C devices found on QWIIC!");
-  } else {
-    Serial.printf("Found %u I2C device(s) on QWIIC\n", device_count);
+    // IDs 100+ keep unknowns clear of the driver-assigned range (2..~10) and
+    // are stable across rescans since the bus enumerates in address order.
+    I2CSensor& s = i2c_sensors[i2c_sensor_count + added];
+    s.sensor_id = 100 + added;
+    s.i2c_addr = addr;
+    s.sensor_type = SENSOR_TYPE_UNKNOWN_I2C;
+    snprintf(s.label, sizeof(s.label), "Unknown 0x%02X", addr);
+    s.active = true;
+    Serial.printf("? Unclaimed I2C device at 0x%02X (reported as unknown)\n", addr);
+    added++;
   }
-  Serial.println("======================================\n");
+  return added;
 }
 
 void scanI2CSensors() {
-  i2c_sensor_count = 0;
-  uint8_t next_sensor_id = 2;
-
   Serial.println("Scanning I2C bus...");
-  scanI2CBus();
 
-  // Check if 0x44 responds to general I2C probe
-  Serial.println("Probing 0x44 directly on QWIIC...");
-  Wire1.beginTransmission(0x44);
-  uint8_t error = Wire1.endTransmission();
-  Serial.printf("0x44 probe result: %d (0=success, 2=NACK on addr, 3=NACK on data, 4=other)\n", error);
+  // List every device on the QWIIC bus (raw addresses + best-guess names).
+  scanI2CBus(&Wire1);
 
-  // Try SHT40 initialization
-  Serial.println("Trying SHT40.begin() on Wire1...");
-  if (sht4.begin(&Wire1)) {
-    Serial.println("✓ Found SHT40 at 0x44");
-    I2CSensor& s1 = i2c_sensors[i2c_sensor_count++];
-    s1.sensor_id = next_sensor_id++;
-    s1.i2c_addr = 0x44;
-    s1.sensor_type = lorapnp::SENSOR_TYPE_TEMPERATURE;
-    strncpy(s1.label, "SHT40 Temp", 16);
-    s1.active = true;
+  // Auto-detect known sensors via the driver registry (sensors/SensorRegistry).
+  // Sensor IDs start at 2 — id 1 is reserved for the legacy fake-sensor path.
+  i2c_sensor_count = detectAllI2CSensors(&Wire1, i2c_sensors, MAX_I2C_SENSORS, 2);
 
-    I2CSensor& s2 = i2c_sensors[i2c_sensor_count++];
-    s2.sensor_id = next_sensor_id++;
-    s2.i2c_addr = 0x44;
-    s2.sensor_type = lorapnp::SENSOR_TYPE_HUMIDITY;
-    strncpy(s2.label, "SHT40 Humidity", 16);
-    s2.active = true;
-  } else {
-    Serial.println("✗ SHT40 not responding at 0x44");
-    Serial.println("Check: 1) Sensor connected? 2) Correct sensor model? 3) Wiring (SDA/SCL)?");
-  }
+  // Note any bus devices no driver claimed.
+  uint8_t known[MAX_I2C_SENSORS];
+  for (uint8_t i = 0; i < i2c_sensor_count; i++) known[i] = i2c_sensors[i].i2c_addr;
+  i2c_sensor_count += reportUnknownI2CDevices(known, i2c_sensor_count);
 
-  // BMP581 detection disabled - uncomment if you have a BMP pressure sensor
-  /*
-  uint8_t bmp_addr = 0;
-  if (bmp5.begin(0x46, &Wire1)) {
-    bmp_addr = 0x46;
-  } else if (bmp5.begin(0x47, &Wire1)) {
-    bmp_addr = 0x47;
-  }
-
-  if (bmp_addr != 0) {
-    Serial.printf("Found BMP581 at 0x%02X\n", bmp_addr);
-    I2CSensor& s = i2c_sensors[i2c_sensor_count++];
-    s.sensor_id = next_sensor_id++;
-    s.i2c_addr = bmp_addr;
-    s.sensor_type = lorapnp::SENSOR_TYPE_PRESSURE;
-    strncpy(s.label, "BMP581 Pressure", 16);
-    s.active = true;
-  }
-  */
-
-  Serial.printf("Detected %u I2C sensors\n", i2c_sensor_count);
+  Serial.printf("Detected %u I2C sensor(s)\n", i2c_sensor_count);
 }
 
 void sendI2CSensorDescriptors() {
@@ -514,44 +484,35 @@ void sendI2CSensorDescriptors() {
 }
 
 void sendI2CSensorData() {
+  // Read the SHT40 once up front if any temp/humidity sensor is registered.
   sensors_event_t humidity, temp;
-
-  if (sht4.getEvent(&humidity, &temp)) {
-    for (uint8_t i = 0; i < i2c_sensor_count; i++) {
-      if (!i2c_sensors[i].active) continue;
-
-      Packet pkt;
-      pkt.type = MessageType::SENSOR_DATA;
-      pkt.setFlag(FLAG_ACK_REQUEST);
-      pkt.src_id = node_id;
-      pkt.dst_id = GATEWAY_ID;
-      pkt.seq = tx_seq++;
-      pkt.payload_len = 6;
-      pkt.payload[0] = i2c_sensors[i].sensor_id;
-      pkt.payload[1] = SENSOR_DATA_FLOAT32;
-
-      float value = 0.0f;
-      if (i2c_sensors[i].sensor_type == lorapnp::SENSOR_TYPE_TEMPERATURE) {
-        value = temp.temperature;
-      } else if (i2c_sensors[i].sensor_type == lorapnp::SENSOR_TYPE_HUMIDITY) {
-        value = humidity.relative_humidity;
-      }
-
-      memcpy(&pkt.payload[2], &value, sizeof(value));
-
-      if (sendPacket(pkt)) {
-        Serial.printf("%s: %.2f\n", i2c_sensors[i].label, (double)value);
-      }
-      delay(100);
+  bool have_sht = false;
+  for (uint8_t i = 0; i < i2c_sensor_count; i++) {
+    if (i2c_sensors[i].sensor_type == lorapnp::SENSOR_TYPE_TEMPERATURE ||
+        i2c_sensors[i].sensor_type == lorapnp::SENSOR_TYPE_HUMIDITY) {
+      have_sht = sht4.getEvent(&humidity, &temp);
+      break;
     }
   }
 
-  // BMP pressure sensor data disabled - uncomment if you have a BMP sensor
-  /*
   for (uint8_t i = 0; i < i2c_sensor_count; i++) {
-    if (!i2c_sensors[i].active || i2c_sensors[i].sensor_type != lorapnp::SENSOR_TYPE_PRESSURE) continue;
+    if (!i2c_sensors[i].active) continue;
 
-    float pressure_hpa = bmp5.readPressure() / 100.0f;
+    // Resolve this sensor's current value by type; skip types we can't read.
+    float value = 0.0f;
+    const char* unit = "";
+    switch (i2c_sensors[i].sensor_type) {
+      case lorapnp::SENSOR_TYPE_TEMPERATURE:
+        if (!have_sht) continue;
+        value = temp.temperature; unit = "C"; break;
+      case lorapnp::SENSOR_TYPE_HUMIDITY:
+        if (!have_sht) continue;
+        value = humidity.relative_humidity; unit = "%"; break;
+      case lorapnp::SENSOR_TYPE_PRESSURE:
+        value = bmp5.readPressure() / 100.0f; unit = "hPa"; break;
+      default:
+        continue;  // unknown/unsupported type — nothing to sample
+    }
 
     Packet pkt;
     pkt.type = MessageType::SENSOR_DATA;
@@ -562,14 +523,13 @@ void sendI2CSensorData() {
     pkt.payload_len = 6;
     pkt.payload[0] = i2c_sensors[i].sensor_id;
     pkt.payload[1] = SENSOR_DATA_FLOAT32;
-    memcpy(&pkt.payload[2], &pressure_hpa, sizeof(pressure_hpa));
+    memcpy(&pkt.payload[2], &value, sizeof(value));
 
     if (sendPacket(pkt)) {
-      Serial.printf("%s: %.2f hPa\n", i2c_sensors[i].label, (double)pressure_hpa);
+      Serial.printf("%s: %.2f %s\n", i2c_sensors[i].label, (double)value, unit);
     }
     delay(100);
   }
-  */
 }
 // ========== END I2C SENSOR DETECTION ==========
 
